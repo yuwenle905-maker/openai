@@ -1,3 +1,5 @@
+options:
+  xcodeVersion: "15.0"
 name: PrivacyDiary
 options:
   bundleIdPrefix: com.privacy
