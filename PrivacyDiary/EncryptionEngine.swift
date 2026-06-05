@@ -2,23 +2,25 @@ import Foundation
 import CryptoKit
 
 // MARK: - EncryptionEngine
-// Two-layer encryption: SHA-256 key-stream XOR + Fisher-Yates shuffled Base64 alphabet.
-// Media (photo/video) is encrypted separately and never included in the clipboard ciphertext.
+// Algorithm: AES-256-GCM (CryptoKit)
+// Key derivation: SHA-256(keyString) → 256-bit SymmetricKey
+// Wire format: Base64(nonce[12] || ciphertext || tag[16])
 
 enum EncryptionError: Error {
     case base64DecodingFailed
     case utf8DecodingFailed
     case jsonSerializationFailed
     case jsonDeserializationFailed
+    case invalidCiphertextLength
 }
 
-// Text-only payload — safe to copy to clipboard (short)
+// Text-only payload — for clipboard (short, WeChat-safe)
 struct TextPayload: Codable {
     let timestamp: String
     let text: String
 }
 
-// Full payload including media — stored locally only, never copied to clipboard
+// Full payload — stored locally, includes media
 struct DiaryPayload: Codable {
     let timestamp: String
     let text: String
@@ -28,22 +30,18 @@ struct DiaryPayload: Codable {
 
 struct EncryptionEngine {
 
-    // MARK: - Encrypt text only (for clipboard)
+    // MARK: - Public API
 
-    static func encryptText(
-        text: String,
-        key: String
-    ) throws -> String {
+    /// Encrypt text only (for clipboard — no media).
+    static func encryptText(text: String, key: String) throws -> String {
         let payload = TextPayload(
             timestamp: ISO8601DateFormatter().string(from: Date()),
             text: text
         )
-        let jsonData = try JSONEncoder().encode(payload)
-        return try encryptData(jsonData, key: key)
+        return try encryptData(JSONEncoder().encode(payload), key: key)
     }
 
-    // MARK: - Encrypt full payload (for local storage)
-
+    /// Encrypt full diary entry including media (for local storage).
     static func encryptDiary(
         text: String,
         photoB64: String = "",
@@ -56,12 +54,10 @@ struct EncryptionEngine {
             photo_base64: photoB64,
             video_base64: videoB64
         )
-        let jsonData = try JSONEncoder().encode(payload)
-        return try encryptData(jsonData, key: key)
+        return try encryptData(JSONEncoder().encode(payload), key: key)
     }
 
-    // MARK: - Decrypt
-
+    /// Decrypt any ciphertext back to DiaryPayload.
     static func decryptDiary(cipherText: String, key: String) throws -> DiaryPayload {
         let data = try decryptData(cipherText, key: key)
         // Try full payload first, fall back to text-only
@@ -73,8 +69,7 @@ struct EncryptionEngine {
                             photo_base64: "", video_base64: "")
     }
 
-    // MARK: - Re-key
-
+    /// Re-encrypt a list of ciphertexts from oldKey to newKey.
     static func rekeyAll(
         ciphertexts: [String],
         oldKey: String,
@@ -86,83 +81,43 @@ struct EncryptionEngine {
         }
     }
 
-    // MARK: - Core encrypt/decrypt (operate on raw Data)
+    // MARK: - Core AES-256-GCM
 
     static func encryptData(_ plainData: Data, key: String) throws -> String {
-        let xored = xorWithKeyStream(data: plainData, key: key)
-        let stdB64 = xored.base64EncodedData(options: [])
-        let shuffled = translateAlphabet(data: stdB64,
-                                         from: stdAlpha,
-                                         to: buildCustomAlphabet(key: key))
-        return String(bytes: shuffled, encoding: .ascii) ?? ""
+        let symKey = symmetricKey(from: key)
+        let sealed = try AES.GCM.seal(plainData, using: symKey)
+        // Pack: nonce(12) + ciphertext + tag(16)
+        var combined = Data()
+        combined.append(contentsOf: sealed.nonce)
+        combined.append(sealed.ciphertext)
+        combined.append(sealed.tag)
+        return combined.base64EncodedString()
     }
 
     static func decryptData(_ cipherText: String, key: String) throws -> Data {
         let cleaned = cipherText
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines).joined()
-        guard let cipherData = cleaned.data(using: .ascii) else {
+        guard let combined = Data(base64Encoded: cleaned) else {
             throw EncryptionError.base64DecodingFailed
         }
-        let stdB64 = translateAlphabet(data: cipherData,
-                                       from: buildCustomAlphabet(key: key),
-                                       to: stdAlpha)
-        guard let xored = Data(base64Encoded: stdB64, options: .ignoreUnknownCharacters) else {
-            throw EncryptionError.base64DecodingFailed
+        // Minimum: 12 (nonce) + 0 (ciphertext) + 16 (tag) = 28 bytes
+        guard combined.count >= 28 else {
+            throw EncryptionError.invalidCiphertextLength
         }
-        return xorWithKeyStream(data: xored, key: key)
+        let nonce      = try AES.GCM.Nonce(data: combined.prefix(12))
+        let ciphertext = combined.dropFirst(12).dropLast(16)
+        let tag        = combined.suffix(16)
+        let box        = try AES.GCM.SealedBox(nonce: nonce,
+                                               ciphertext: ciphertext,
+                                               tag: tag)
+        return try AES.GCM.open(box, using: symmetricKey(from: key))
     }
 
-    // MARK: - Key Stream
+    // MARK: - Key Derivation
 
-    private static func deriveKeyStream(key: String, length: Int) -> [UInt8] {
-        var stream = [UInt8]()
-        stream.reserveCapacity(length)
-        let keyBytes = Array(key.utf8)
-        var block = Array(SHA256.hash(data: Data(keyBytes)))
-        while stream.count < length {
-            stream.append(contentsOf: block)
-            var combined = block
-            combined.append(contentsOf: keyBytes)
-            block = Array(SHA256.hash(data: Data(combined)))
-        }
-        return Array(stream.prefix(length))
-    }
-
-    private static func xorWithKeyStream(data: Data, key: String) -> Data {
-        let keyStream = deriveKeyStream(key: key, length: data.count)
-        return Data(data.enumerated().map { (i, byte) in byte ^ keyStream[i] })
-    }
-
-    // MARK: - Custom Base64 Alphabet
-
-    private static let stdAlpha: [UInt8] = Array(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".utf8
-    )
-
-    private static func buildCustomAlphabet(key: String) -> [UInt8] {
-        let md5 = Insecure.MD5.hash(data: Data(key.utf8))
-        let seedBytes = Array(md5.prefix(8))
-        var seedInt: UInt64 = 0
-        for b in seedBytes { seedInt = seedInt &* 256 &+ UInt64(b) }
-
-        var alpha = stdAlpha
-        let a: UInt64 = (seedInt | 1)
-        let c: UInt64 = 0x3039
-        let m: UInt64 = 0x1_0000_0000
-        var state = seedInt
-        for i in stride(from: alpha.count - 1, through: 1, by: -1) {
-            state = (a &* state &+ c) % m
-            let j = Int(state) % (i + 1)
-            alpha.swapAt(i, j)
-        }
-        return alpha
-    }
-
-    private static func translateAlphabet(data: Data, from src: [UInt8], to dst: [UInt8]) -> Data {
-        var table = [UInt8](repeating: 0, count: 256)
-        for i in 0..<256 { table[i] = UInt8(i) }
-        for (s, d) in zip(src, dst) { table[Int(s)] = d }
-        return Data(data.map { table[Int($0)] })
+    private static func symmetricKey(from keyString: String) -> SymmetricKey {
+        let hash = SHA256.hash(data: Data(keyString.utf8))
+        return SymmetricKey(data: hash)
     }
 }

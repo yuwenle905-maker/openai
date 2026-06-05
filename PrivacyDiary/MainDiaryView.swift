@@ -94,7 +94,9 @@ struct MainDiaryView: View {
 private struct CiphertextRow: View {
 
     let entry: DiaryEntry
+    @EnvironmentObject private var keyStore: KeyStore
     @State private var copied = false
+    @State private var showDecoder = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -113,7 +115,7 @@ private struct CiphertextRow: View {
                         .transition(.opacity)
                 }
             }
-            Text(entry.encryptedData)
+            Text(entry.clipboardData)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
                 .lineLimit(3)
@@ -123,21 +125,126 @@ private struct CiphertextRow: View {
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .contextMenu {
+            // 选项1：复制
             Button {
                 copyToClipboard()
             } label: {
-                Label("复制密文", systemImage: "doc.on.doc")
+                Label("复制", systemImage: "doc.on.doc")
+            }
+            // 选项2：分享（内置解码器）
+            Button {
+                showDecoder = true
+            } label: {
+                Label("分享", systemImage: "square.and.arrow.up")
             }
         }
-        .onLongPressGesture { copyToClipboard() }
+        .sheet(isPresented: $showDecoder) {
+            DecoderSheet(cipherText: entry.clipboardData)
+                .environmentObject(keyStore)
+        }
     }
 
     private func copyToClipboard() {
-        // Copy text-only cipher — short enough for WeChat and other apps
         UIPasteboard.general.string = entry.clipboardData
         withAnimation { copied = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation { copied = false }
+        }
+    }
+}
+
+// MARK: - DecoderSheet
+// Disguised as a "share" panel. The unlock code is the fake "software version number".
+
+struct DecoderSheet: View {
+
+    let cipherText: String
+    @EnvironmentObject private var keyStore: KeyStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var inputCode = ""
+    @State private var decryptedText: String? = nil
+    @State private var errorMsg: String? = nil
+    @State private var copiedResult = false
+
+    private let unlockCode = "230606"
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                // ── 版本号输入区 ───────────────────────────────────────────
+                Section {
+                    SecureField("请输入软件版本号", text: $inputCode)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.numberPad)
+
+                    Button("获取") {
+                        fetchContent()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .fontWeight(.semibold)
+                    .disabled(inputCode.isEmpty)
+
+                    if let err = errorMsg {
+                        Text(err)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                } header: {
+                    Text("版本验证")
+                }
+
+                // ── 解密结果区 ────────────────────────────────────────────
+                if let text = decryptedText {
+                    Section {
+                        Text(text)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button {
+                            UIPasteboard.general.string = text
+                            copiedResult = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                copiedResult = false
+                            }
+                        } label: {
+                            Label(copiedResult ? "已复制" : "复制文字内容",
+                                  systemImage: copiedResult ? "checkmark" : "doc.on.doc")
+                        }
+                        .foregroundStyle(copiedResult ? .green : .accentColor)
+                    } header: {
+                        Text("内容")
+                    }
+                }
+            }
+            .navigationTitle("分享")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func fetchContent() {
+        guard inputCode == unlockCode else {
+            errorMsg = "版本号错误"
+            decryptedText = nil
+            return
+        }
+        errorMsg = nil
+        do {
+            let payload = try EncryptionEngine.decryptDiary(
+                cipherText: cipherText,
+                key: keyStore.globalKey
+            )
+            decryptedText = payload.text.isEmpty ? "（无文字内容）" : payload.text
+        } catch {
+            errorMsg = "解析失败，请检查版本号"
+            decryptedText = nil
         }
     }
 }
@@ -158,7 +265,6 @@ struct ComposerSheet: View {
     @State private var errorMessage: String?
     @State private var isSubmitting = false
 
-    // 发表条件：文字、照片、视频 任意一项有内容即可
     private var canSubmit: Bool {
         let hasText  = !text.trimmingCharacters(in: .whitespaces).isEmpty
         let hasPhoto = selectedPhotoData != nil
@@ -169,7 +275,6 @@ struct ComposerSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                // ── 文字 ──────────────────────────────────────────────────
                 Section {
                     TextEditor(text: $text)
                         .frame(minHeight: 140)
@@ -185,9 +290,7 @@ struct ComposerSheet: View {
                         }
                 } header: { Text("内容") }
 
-                // ── 多媒体 ────────────────────────────────────────────────
                 Section {
-                    // 照片
                     PhotosPicker(
                         selection: $selectedPhotoItem,
                         matching: .images,
@@ -213,10 +316,7 @@ struct ComposerSheet: View {
                         }
                     }
 
-                    // 视频
-                    Button {
-                        showVideoPicker = true
-                    } label: {
+                    Button { showVideoPicker = true } label: {
                         Label(
                             selectedVideoURL != nil ? "视频已选中" : "添加视频",
                             systemImage: selectedVideoURL != nil ? "video.fill" : "video.badge.plus"
@@ -232,7 +332,6 @@ struct ComposerSheet: View {
                     }
                 } header: { Text("多媒体") }
 
-                // ── 错误提示 ──────────────────────────────────────────────
                 if let msg = errorMessage {
                     Section {
                         Text(msg).foregroundStyle(.red).font(.caption)
@@ -279,18 +378,10 @@ struct ComposerSheet: View {
                     vURL.stopAccessingSecurityScopedResource()
                 }
 
-                // Full payload (with media) stored locally
                 let fullCipher = try EncryptionEngine.encryptDiary(
-                    text: text,
-                    photoB64: photoB64,
-                    videoB64: videoB64,
-                    key: key
+                    text: text, photoB64: photoB64, videoB64: videoB64, key: key
                 )
-                // Text-only cipher copied to clipboard (short, wechat-safe)
-                let clipCipher = try EncryptionEngine.encryptText(
-                    text: text,
-                    key: key
-                )
+                let clipCipher = try EncryptionEngine.encryptText(text: text, key: key)
 
                 await MainActor.run {
                     let entry = DiaryEntry(encryptedData: fullCipher, clipboardData: clipCipher)

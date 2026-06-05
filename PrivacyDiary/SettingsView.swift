@@ -9,7 +9,6 @@ final class KeyStore: ObservableObject {
     }
 
     init() {
-        // Use a fixed default key so the app works out of the box without setup
         let saved = UserDefaults.standard.string(forKey: "diary_global_key") ?? ""
         self.globalKey = saved.isEmpty ? "ZaYu_Default_2024" : saved
     }
@@ -26,7 +25,6 @@ struct SettingsView: View {
     @State private var isRekeying = false
     @State private var showConfirmRekey = false
     @State private var rekeySuccess: Bool? = nil
-    @State private var copiedKey = false
 
     var body: some View {
         NavigationStack {
@@ -55,13 +53,11 @@ struct SettingsView: View {
             HStack {
                 Text("一键刷新密钥")
                 Spacer()
-                // Result badge
                 if let ok = rekeySuccess {
                     Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundStyle(ok ? .green : .red)
                         .transition(.scale.combined(with: .opacity))
                 }
-                // Refresh button
                 Button {
                     showConfirmRekey = true
                 } label: {
@@ -75,7 +71,7 @@ struct SettingsView: View {
         } header: {
             Label("密钥管理", systemImage: "key.fill")
         } footer: {
-            Text("点击刷新按钮将随机生成新密钥并重新加密所有本地记录。密钥不对外显示。")
+            Text("点击刷新按钮将随机生成新密钥并重新加密所有本地记录。")
                 .font(.caption)
         }
     }
@@ -85,32 +81,7 @@ struct SettingsView: View {
     private var infoSection: some View {
         Section {
             LabeledContent("本地条目数", value: "\(entries.count) 条")
-
-            // Disguised key display — looks like a technical note, not a key
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("软件编码原理")
-                        .font(.body)
-                    Text(keyStore.globalKey)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                }
-                Spacer()
-                Button {
-                    UIPasteboard.general.string = keyStore.globalKey
-                    copiedKey = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        copiedKey = false
-                    }
-                } label: {
-                    Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
-                        .foregroundStyle(copiedKey ? .green : .secondary)
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-            }
+            LabeledContent("软件版本", value: "260606")
         } header: {
             Label("数据库信息", systemImage: "externaldrive.fill")
         }
@@ -132,12 +103,13 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 刷新密钥逻辑（随机生成新密钥）
+    // MARK: - 刷新密钥逻辑
 
     private func performRekey() {
         let oldKey = keyStore.globalKey
-        // Generate a random 32-char hex key
-        let newKey = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let newKey = (0..<16).map { _ in
+            String(format: "%02x", UInt8.random(in: 0...255))
+        }.joined()
 
         isRekeying = true
         rekeySuccess = nil
@@ -153,9 +125,12 @@ struct SettingsView: View {
                     guard let entry = try modelContext.fetch(descriptor).first else { continue }
                     entry.encryptedData = try EncryptionEngine.rekeyAll(
                         ciphertexts: [entry.encryptedData],
-                        oldKey: oldKey,
-                        newKey: newKey
+                        oldKey: oldKey, newKey: newKey
                     ).first ?? entry.encryptedData
+                    entry.clipboardData = try EncryptionEngine.rekeyAll(
+                        ciphertexts: [entry.clipboardData],
+                        oldKey: oldKey, newKey: newKey
+                    ).first ?? entry.clipboardData
                 }
                 try modelContext.save()
                 keyStore.globalKey = newKey
@@ -164,7 +139,6 @@ struct SettingsView: View {
                 withAnimation { rekeySuccess = false }
             }
             isRekeying = false
-            // Auto-clear badge after 3s
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 withAnimation { rekeySuccess = nil }
             }
