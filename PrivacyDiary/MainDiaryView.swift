@@ -1,10 +1,9 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import UniformTypeIdentifiers
 
 // MARK: - MainDiaryView
-// Encrypt-only tool: displays ciphertext list, long-press to copy.
-// No decryption, no plaintext preview exists anywhere in this view.
 
 struct MainDiaryView: View {
 
@@ -33,8 +32,6 @@ struct MainDiaryView: View {
         }
     }
 
-    // MARK: Date toolbar
-
     private var datePicker: some ToolbarContent {
         ToolbarItem(placement: .principal) {
             DatePicker("", selection: $selectedDate, displayedComponents: .date)
@@ -48,8 +45,6 @@ struct MainDiaryView: View {
         f.dateFormat = "yyyy年M月d日"
         return f.string(from: date)
     }
-
-    // MARK: Entry list
 
     private var entryList: some View {
         Group {
@@ -79,12 +74,8 @@ struct MainDiaryView: View {
         try? modelContext.save()
     }
 
-    // MARK: + button
-
     private var addButton: some View {
-        Button {
-            showComposer = true
-        } label: {
+        Button { showComposer = true } label: {
             Image(systemName: "plus")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.white)
@@ -99,7 +90,6 @@ struct MainDiaryView: View {
 }
 
 // MARK: - CiphertextRow
-// Long-press to copy. No tap-to-expand. No decryption.
 
 private struct CiphertextRow: View {
 
@@ -123,7 +113,6 @@ private struct CiphertextRow: View {
                         .transition(.opacity)
                 }
             }
-
             Text(entry.encryptedData)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
@@ -140,9 +129,7 @@ private struct CiphertextRow: View {
                 Label("复制密文", systemImage: "doc.on.doc")
             }
         }
-        .onLongPressGesture {
-            copyToClipboard()
-        }
+        .onLongPressGesture { copyToClipboard() }
     }
 
     private func copyToClipboard() {
@@ -165,19 +152,30 @@ struct ComposerSheet: View {
     @State private var text = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedPhotoData: Data?
+    @State private var selectedVideoURL: URL?
+    @State private var showVideoPicker = false
     @State private var errorMessage: String?
     @State private var isSubmitting = false
+
+    // 发表条件：文字、照片、视频 任意一项有内容即可
+    private var canSubmit: Bool {
+        let hasText  = !text.trimmingCharacters(in: .whitespaces).isEmpty
+        let hasPhoto = selectedPhotoData != nil
+        let hasVideo = selectedVideoURL != nil
+        return (hasText || hasPhoto || hasVideo) && !isSubmitting
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                // ── 文字 ──────────────────────────────────────────────────
                 Section {
                     TextEditor(text: $text)
                         .frame(minHeight: 140)
                         .scrollContentBackground(.hidden)
                         .overlay(alignment: .topLeading) {
                             if text.isEmpty {
-                                Text("写点什么…")
+                                Text("写点什么…（可选）")
                                     .foregroundStyle(.tertiary)
                                     .padding(.top, 8)
                                     .padding(.leading, 4)
@@ -186,7 +184,9 @@ struct ComposerSheet: View {
                         }
                 } header: { Text("内容") }
 
+                // ── 多媒体 ────────────────────────────────────────────────
                 Section {
+                    // 照片
                     PhotosPicker(
                         selection: $selectedPhotoItem,
                         matching: .images,
@@ -194,8 +194,7 @@ struct ComposerSheet: View {
                     ) {
                         Label(
                             selectedPhotoData != nil ? "照片已选中" : "添加照片",
-                            systemImage: selectedPhotoData != nil
-                                ? "photo.fill" : "photo.on.rectangle.angled"
+                            systemImage: selectedPhotoData != nil ? "photo.fill" : "photo.on.rectangle.angled"
                         )
                     }
                     .onChange(of: selectedPhotoItem) { _, item in
@@ -212,8 +211,27 @@ struct ComposerSheet: View {
                             Label("移除照片", systemImage: "trash")
                         }
                     }
+
+                    // 视频
+                    Button {
+                        showVideoPicker = true
+                    } label: {
+                        Label(
+                            selectedVideoURL != nil ? "视频已选中" : "添加视频",
+                            systemImage: selectedVideoURL != nil ? "video.fill" : "video.badge.plus"
+                        )
+                    }
+
+                    if selectedVideoURL != nil {
+                        Button(role: .destructive) {
+                            selectedVideoURL = nil
+                        } label: {
+                            Label("移除视频", systemImage: "trash")
+                        }
+                    }
                 } header: { Text("多媒体") }
 
+                // ── 错误提示 ──────────────────────────────────────────────
                 if let msg = errorMessage {
                     Section {
                         Text(msg).foregroundStyle(.red).font(.caption)
@@ -229,9 +247,17 @@ struct ComposerSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("发表") { submit() }
                         .fontWeight(.semibold)
-                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || keyStore.globalKey.isEmpty
-                                  || isSubmitting)
+                        .disabled(!canSubmit)
+                }
+            }
+            .fileImporter(
+                isPresented: $showVideoPicker,
+                allowedContentTypes: [.movie, .video, UTType("public.mpeg-4") ?? .movie],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let url = urls.first {
+                    url.startAccessingSecurityScopedResource()
+                    selectedVideoURL = url
                 }
             }
         }
@@ -239,20 +265,23 @@ struct ComposerSheet: View {
 
     private func submit() {
         let key = keyStore.globalKey
-        guard !key.isEmpty else {
-            errorMessage = "请先在设置中配置全局密钥。"
-            return
-        }
         isSubmitting = true
         errorMessage = nil
 
         Task {
             do {
                 let photoB64 = selectedPhotoData?.base64EncodedString() ?? ""
+                var videoB64 = ""
+                if let vURL = selectedVideoURL,
+                   let videoData = try? Data(contentsOf: vURL) {
+                    videoB64 = videoData.base64EncodedString()
+                    vURL.stopAccessingSecurityScopedResource()
+                }
+
                 let cipher = try EncryptionEngine.encryptDiary(
                     text: text,
                     photoB64: photoB64,
-                    videoB64: "",
+                    videoB64: videoB64,
                     key: key
                 )
                 await MainActor.run {

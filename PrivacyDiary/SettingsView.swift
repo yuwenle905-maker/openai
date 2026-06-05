@@ -9,7 +9,9 @@ final class KeyStore: ObservableObject {
     }
 
     init() {
-        self.globalKey = UserDefaults.standard.string(forKey: "diary_global_key") ?? ""
+        // Use a fixed default key so the app works out of the box without setup
+        let saved = UserDefaults.standard.string(forKey: "diary_global_key") ?? ""
+        self.globalKey = saved.isEmpty ? "ZaYu_Default_2024" : saved
     }
 }
 
@@ -21,84 +23,27 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var entries: [DiaryEntry]
 
-    @State private var pendingNewKey = ""
     @State private var isRekeying = false
     @State private var showConfirmRekey = false
-    @State private var rekeyResult: RekeyResult?
-    @State private var showCurrentKey = false
-    @State private var showNewKey = false
-
-    enum RekeyResult: Equatable {
-        case success(count: Int)
-        case failure(message: String)
-    }
-
-    // "一键更新"可用条件：新密钥非空、与当前密钥不同
-    // 注意：不再要求 entries 非空，让用户随时可以更换密钥
-    private var canRekey: Bool {
-        let trimmed = pendingNewKey.trimmingCharacters(in: .whitespaces)
-        return !trimmed.isEmpty && trimmed != keyStore.globalKey
-    }
+    @State private var rekeySuccess: Bool? = nil   // nil=idle, true=ok, false=fail
 
     var body: some View {
         NavigationStack {
             Form {
-                currentKeySection
                 rekeySection
                 infoSection
             }
-            .navigationTitle("安全设置")
+            .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
             .alert("确认更换密钥", isPresented: $showConfirmRekey) {
                 Button("取消", role: .cancel) {}
-                Button("确认更新", role: .destructive) { performRekey() }
+                Button("确认", role: .destructive) { performRekey() }
             } message: {
-                Text("将用新密钥重新加密本地 \(entries.count) 条日记，操作不可撤销。")
+                Text("将为本地 \(entries.count) 条记录随机生成并应用新密钥，操作不可撤销。")
             }
             .overlay {
-                if isRekeying { rekeyProgressOverlay }
+                if isRekeying { progressOverlay }
             }
-        }
-        .onAppear {
-            // 首次进入时用当前全局密钥预填新密钥框，方便用户对比修改
-            if pendingNewKey.isEmpty {
-                pendingNewKey = keyStore.globalKey
-            }
-        }
-    }
-
-    // MARK: - 当前密钥 Section
-
-    private var currentKeySection: some View {
-        Section {
-            HStack {
-                Group {
-                    if showCurrentKey {
-                        TextField("尚未设置密钥", text: $keyStore.globalKey)
-                    } else {
-                        SecureField("尚未设置密钥", text: $keyStore.globalKey)
-                    }
-                }
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.done)
-
-                Button {
-                    showCurrentKey.toggle()
-                } label: {
-                    Image(systemName: showCurrentKey ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            strengthBar(key: keyStore.globalKey)
-
-        } header: {
-            Label("全局加密密钥", systemImage: "key.fill")
-        } footer: {
-            Text("所有日记均用此密钥加密，请妥善保管。遗失后数据无法恢复。")
-                .font(.caption)
         }
     }
 
@@ -107,50 +52,29 @@ struct SettingsView: View {
     private var rekeySection: some View {
         Section {
             HStack {
-                Group {
-                    if showNewKey {
-                        TextField("输入新密钥", text: $pendingNewKey)
-                    } else {
-                        SecureField("输入新密钥", text: $pendingNewKey)
-                    }
+                Text("一键刷新密钥")
+                Spacer()
+                // Result badge
+                if let ok = rekeySuccess {
+                    Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(ok ? .green : .red)
+                        .transition(.scale.combined(with: .opacity))
                 }
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.done)
-
+                // Refresh button
                 Button {
-                    showNewKey.toggle()
+                    showConfirmRekey = true
                 } label: {
-                    Image(systemName: showNewKey ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.orange)
                 }
                 .buttonStyle(.plain)
+                .disabled(isRekeying)
             }
-
-            strengthBar(key: pendingNewKey)
-
-            Button {
-                showConfirmRekey = true
-            } label: {
-                HStack {
-                    Spacer()
-                    Label("一键更新所有密文", systemImage: "arrow.triangle.2.circlepath.circle.fill")
-                        .font(.body.weight(.semibold))
-                    Spacer()
-                }
-                .padding(.vertical, 4)
-            }
-            .tint(.orange)
-            .disabled(!canRekey || isRekeying)
-
-            if let result = rekeyResult {
-                rekeyResultRow(result)
-            }
-
         } header: {
-            Label("更换密钥", systemImage: "arrow.triangle.2.circlepath")
+            Label("密钥管理", systemImage: "key.fill")
         } footer: {
-            Text("输入新密钥后点击【一键更新】，App 将用新密钥重新加密本地所有历史日记。")
+            Text("点击刷新按钮将随机生成新密钥并重新加密所有本地记录。密钥不对外显示。")
                 .font(.caption)
         }
     }
@@ -160,69 +84,19 @@ struct SettingsView: View {
     private var infoSection: some View {
         Section {
             LabeledContent("本地条目数", value: "\(entries.count) 条")
-            LabeledContent("加密算法", value: "SHA-256 密钥流 XOR + 自定义 Base64")
-            LabeledContent("存储方式", value: "SwiftData（沙盒本地）")
         } header: {
             Label("数据库信息", systemImage: "externaldrive.fill")
         }
     }
 
-    // MARK: - 密钥强度条
-
-    @ViewBuilder
-    private func strengthBar(key: String) -> some View {
-        let s = strength(key)
-        HStack(spacing: 4) {
-            ForEach(0..<4, id: \.self) { i in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(i < s.level ? s.color : Color(.systemFill))
-                    .frame(height: 4)
-            }
-            Text(s.label)
-                .font(.caption2)
-                .foregroundStyle(s.color)
-        }
-    }
-
-    private struct Strength { let level: Int; let label: String; let color: Color }
-
-    private func strength(_ key: String) -> Strength {
-        var score = 0
-        if key.count >= 8  { score += 1 }
-        if key.count >= 14 { score += 1 }
-        if key.rangeOfCharacter(from: .decimalDigits) != nil { score += 1 }
-        if key.rangeOfCharacter(from: CharacterSet.alphanumerics.inverted) != nil { score += 1 }
-        switch score {
-        case 0:  return Strength(level: 0, label: "未设置", color: .gray)
-        case 1:  return Strength(level: 1, label: "弱",     color: .red)
-        case 2:  return Strength(level: 2, label: "一般",   color: .orange)
-        case 3:  return Strength(level: 3, label: "较强",   color: .yellow)
-        default: return Strength(level: 4, label: "强",     color: .green)
-        }
-    }
-
-    // MARK: - 结果行
-
-    @ViewBuilder
-    private func rekeyResultRow(_ result: RekeyResult) -> some View {
-        switch result {
-        case .success(let count):
-            Label("成功更新 \(count) 条密文", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green).font(.subheadline)
-        case .failure(let msg):
-            Label("更新失败：\(msg)", systemImage: "xmark.circle.fill")
-                .foregroundStyle(.red).font(.subheadline)
-        }
-    }
-
     // MARK: - 进度遮罩
 
-    private var rekeyProgressOverlay: some View {
+    private var progressOverlay: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
             VStack(spacing: 16) {
                 ProgressView().scaleEffect(1.4).tint(.white)
-                Text("正在重加密所有日记…")
+                Text("正在刷新密钥…")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.white)
             }
@@ -231,22 +105,20 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 重加密逻辑
+    // MARK: - 刷新密钥逻辑（随机生成新密钥）
 
     private func performRekey() {
         let oldKey = keyStore.globalKey
-        let newKey = pendingNewKey.trimmingCharacters(in: .whitespaces)
-        guard !newKey.isEmpty, newKey != oldKey else { return }
+        // Generate a random 32-char hex key
+        let newKey = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
 
         isRekeying = true
-        rekeyResult = nil
+        rekeySuccess = nil
 
-        // Snapshot entry IDs on main thread before entering Task
         let entryIDs = entries.map { $0.id }
 
         Task { @MainActor in
             do {
-                var count = 0
                 for id in entryIDs {
                     let descriptor = FetchDescriptor<DiaryEntry>(
                         predicate: #Predicate { $0.id == id }
@@ -257,15 +129,18 @@ struct SettingsView: View {
                         oldKey: oldKey,
                         newKey: newKey
                     ).first ?? entry.encryptedData
-                    count += 1
                 }
                 try modelContext.save()
                 keyStore.globalKey = newKey
-                rekeyResult = .success(count: count)
+                withAnimation { rekeySuccess = true }
             } catch {
-                rekeyResult = .failure(message: error.localizedDescription)
+                withAnimation { rekeySuccess = false }
             }
             isRekeying = false
+            // Auto-clear badge after 3s
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                withAnimation { rekeySuccess = nil }
+            }
         }
     }
 }
