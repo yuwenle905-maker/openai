@@ -25,7 +25,8 @@ struct SettingsView: View {
 
     @State private var isRekeying = false
     @State private var showConfirmRekey = false
-    @State private var rekeySuccess: Bool? = nil   // nil=idle, true=ok, false=fail
+    @State private var rekeySuccess: Bool? = nil
+    @State private var copiedKey = false
 
     var body: some View {
         NavigationStack {
@@ -84,6 +85,32 @@ struct SettingsView: View {
     private var infoSection: some View {
         Section {
             LabeledContent("本地条目数", value: "\(entries.count) 条")
+
+            // Disguised key display — looks like a technical note, not a key
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("软件编码原理")
+                        .font(.body)
+                    Text(keyStore.globalKey)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = keyStore.globalKey
+                    copiedKey = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        copiedKey = false
+                    }
+                } label: {
+                    Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
+                        .foregroundStyle(copiedKey ? .green : .secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
         } header: {
             Label("数据库信息", systemImage: "externaldrive.fill")
         }

@@ -2,8 +2,8 @@ import Foundation
 import CryptoKit
 
 // MARK: - EncryptionEngine
-// Algorithm: SHA-256 key-stream XOR  +  Fisher-Yates shuffled Base64 alphabet
-// Compatible with diary_core.py Phase-1 prototype.
+// Two-layer encryption: SHA-256 key-stream XOR + Fisher-Yates shuffled Base64 alphabet.
+// Media (photo/video) is encrypted separately and never included in the clipboard ciphertext.
 
 enum EncryptionError: Error {
     case base64DecodingFailed
@@ -12,6 +12,13 @@ enum EncryptionError: Error {
     case jsonDeserializationFailed
 }
 
+// Text-only payload — safe to copy to clipboard (short)
+struct TextPayload: Codable {
+    let timestamp: String
+    let text: String
+}
+
+// Full payload including media — stored locally only, never copied to clipboard
 struct DiaryPayload: Codable {
     let timestamp: String
     let text: String
@@ -21,9 +28,22 @@ struct DiaryPayload: Codable {
 
 struct EncryptionEngine {
 
-    // MARK: Public API
+    // MARK: - Encrypt text only (for clipboard)
 
-    /// Encrypt a diary entry into an obfuscated ciphertext string.
+    static func encryptText(
+        text: String,
+        key: String
+    ) throws -> String {
+        let payload = TextPayload(
+            timestamp: ISO8601DateFormatter().string(from: Date()),
+            text: text
+        )
+        let jsonData = try JSONEncoder().encode(payload)
+        return try encryptData(jsonData, key: key)
+    }
+
+    // MARK: - Encrypt full payload (for local storage)
+
     static func encryptDiary(
         text: String,
         photoB64: String = "",
@@ -37,7 +57,39 @@ struct EncryptionEngine {
             video_base64: videoB64
         )
         let jsonData = try JSONEncoder().encode(payload)
-        let xored = xorWithKeyStream(data: jsonData, key: key)
+        return try encryptData(jsonData, key: key)
+    }
+
+    // MARK: - Decrypt
+
+    static func decryptDiary(cipherText: String, key: String) throws -> DiaryPayload {
+        let data = try decryptData(cipherText, key: key)
+        // Try full payload first, fall back to text-only
+        if let full = try? JSONDecoder().decode(DiaryPayload.self, from: data) {
+            return full
+        }
+        let text = try JSONDecoder().decode(TextPayload.self, from: data)
+        return DiaryPayload(timestamp: text.timestamp, text: text.text,
+                            photo_base64: "", video_base64: "")
+    }
+
+    // MARK: - Re-key
+
+    static func rekeyAll(
+        ciphertexts: [String],
+        oldKey: String,
+        newKey: String
+    ) throws -> [String] {
+        try ciphertexts.map { ct in
+            let data = try decryptData(ct, key: oldKey)
+            return try encryptData(data, key: newKey)
+        }
+    }
+
+    // MARK: - Core encrypt/decrypt (operate on raw Data)
+
+    static func encryptData(_ plainData: Data, key: String) throws -> String {
+        let xored = xorWithKeyStream(data: plainData, key: key)
         let stdB64 = xored.base64EncodedData(options: [])
         let shuffled = translateAlphabet(data: stdB64,
                                          from: stdAlpha,
@@ -45,10 +97,9 @@ struct EncryptionEngine {
         return String(bytes: shuffled, encoding: .ascii) ?? ""
     }
 
-    /// Decrypt a ciphertext string back to a DiaryPayload.
-    static func decryptDiary(cipherText: String, key: String) throws -> DiaryPayload {
-        // Strip any whitespace/newlines that may have been introduced by clipboard or display
-        let cleaned = cipherText.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func decryptData(_ cipherText: String, key: String) throws -> Data {
+        let cleaned = cipherText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines).joined()
         guard let cipherData = cleaned.data(using: .ascii) else {
             throw EncryptionError.base64DecodingFailed
@@ -59,35 +110,16 @@ struct EncryptionEngine {
         guard let xored = Data(base64Encoded: stdB64, options: .ignoreUnknownCharacters) else {
             throw EncryptionError.base64DecodingFailed
         }
-        let plainData = xorWithKeyStream(data: xored, key: key)
-        return try JSONDecoder().decode(DiaryPayload.self, from: plainData)
+        return xorWithKeyStream(data: xored, key: key)
     }
 
-    /// Re-encrypt a list of ciphertexts from oldKey to newKey.
-    static func rekeyAll(
-        ciphertexts: [String],
-        oldKey: String,
-        newKey: String
-    ) throws -> [String] {
-        try ciphertexts.map { ct in
-            let payload = try decryptDiary(cipherText: ct, key: oldKey)
-            return try encryptDiary(
-                text: payload.text,
-                photoB64: payload.photo_base64,
-                videoB64: payload.video_base64,
-                key: newKey
-            )
-        }
-    }
-
-    // MARK: - Key Stream (SHA-256 chaining)
+    // MARK: - Key Stream
 
     private static func deriveKeyStream(key: String, length: Int) -> [UInt8] {
         var stream = [UInt8]()
         stream.reserveCapacity(length)
         let keyBytes = Array(key.utf8)
         var block = Array(SHA256.hash(data: Data(keyBytes)))
-
         while stream.count < length {
             stream.append(contentsOf: block)
             var combined = block
@@ -99,33 +131,26 @@ struct EncryptionEngine {
 
     private static func xorWithKeyStream(data: Data, key: String) -> Data {
         let keyStream = deriveKeyStream(key: key, length: data.count)
-        let bytes = data.enumerated().map { (i, byte) in byte ^ keyStream[i] }
-        return Data(bytes)
+        return Data(data.enumerated().map { (i, byte) in byte ^ keyStream[i] })
     }
 
-    // MARK: - Custom Base64 Alphabet (Fisher-Yates + LCG seeded by MD5)
+    // MARK: - Custom Base64 Alphabet
 
-    // Standard Base64 alphabet as ASCII bytes
     private static let stdAlpha: [UInt8] = Array(
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".utf8
     )
 
     private static func buildCustomAlphabet(key: String) -> [UInt8] {
-        // Seed from first 8 bytes of MD5(key) interpreted as UInt64
         let md5 = Insecure.MD5.hash(data: Data(key.utf8))
         let seedBytes = Array(md5.prefix(8))
         var seedInt: UInt64 = 0
-        for b in seedBytes {
-            seedInt = seedInt &* 256 &+ UInt64(b)
-        }
+        for b in seedBytes { seedInt = seedInt &* 256 &+ UInt64(b) }
 
         var alpha = stdAlpha
-        // LCG params matching Python prototype
         let a: UInt64 = (seedInt | 1)
         let c: UInt64 = 0x3039
-        let m: UInt64 = 0x1_0000_0000   // 2^32
+        let m: UInt64 = 0x1_0000_0000
         var state = seedInt
-
         for i in stride(from: alpha.count - 1, through: 1, by: -1) {
             state = (a &* state &+ c) % m
             let j = Int(state) % (i + 1)
@@ -134,18 +159,10 @@ struct EncryptionEngine {
         return alpha
     }
 
-    // MARK: - Alphabet Translation
-
-    private static func translateAlphabet(
-        data: Data,
-        from src: [UInt8],
-        to dst: [UInt8]
-    ) -> Data {
-        // Build lookup table
+    private static func translateAlphabet(data: Data, from src: [UInt8], to dst: [UInt8]) -> Data {
         var table = [UInt8](repeating: 0, count: 256)
-        for i in 0..<256 { table[i] = UInt8(i) }   // identity
+        for i in 0..<256 { table[i] = UInt8(i) }
         for (s, d) in zip(src, dst) { table[Int(s)] = d }
-
         return Data(data.map { table[Int($0)] })
     }
 }

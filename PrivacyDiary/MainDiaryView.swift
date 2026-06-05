@@ -133,7 +133,8 @@ private struct CiphertextRow: View {
     }
 
     private func copyToClipboard() {
-        UIPasteboard.general.string = entry.encryptedData
+        // Copy text-only cipher — short enough for WeChat and other apps
+        UIPasteboard.general.string = entry.clipboardData
         withAnimation { copied = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation { copied = false }
@@ -278,14 +279,21 @@ struct ComposerSheet: View {
                     vURL.stopAccessingSecurityScopedResource()
                 }
 
-                let cipher = try EncryptionEngine.encryptDiary(
+                // Full payload (with media) stored locally
+                let fullCipher = try EncryptionEngine.encryptDiary(
                     text: text,
                     photoB64: photoB64,
                     videoB64: videoB64,
                     key: key
                 )
+                // Text-only cipher copied to clipboard (short, wechat-safe)
+                let clipCipher = try EncryptionEngine.encryptText(
+                    text: text,
+                    key: key
+                )
+
                 await MainActor.run {
-                    let entry = DiaryEntry(encryptedData: cipher)
+                    let entry = DiaryEntry(encryptedData: fullCipher, clipboardData: clipCipher)
                     modelContext.insert(entry)
                     try? modelContext.save()
                     isPresented = false
