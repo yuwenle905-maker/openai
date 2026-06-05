@@ -15,14 +15,14 @@ struct DiaryApp: App {
     }
 }
 
-// MARK: - ContentView (tab shell)
+// MARK: - ContentView
 
 struct ContentView: View {
     var body: some View {
         TabView {
             MainDiaryView()
                 .tabItem {
-                    Label("日记", systemImage: "book.closed.fill")
+                    Label("杂鱼", systemImage: "fish.fill")
                 }
 
             SettingsView()

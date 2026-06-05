@@ -29,6 +29,10 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      # ── 3b. Generate app icon ─────────────────────────────────────────────
+      - name: Generate fish app icon
+        run: python3 gen_icon.py
+
       # ── 4. Generate .xcodeproj ────────────────────────────────────────────
       - name: Generate Xcode project
         run: |

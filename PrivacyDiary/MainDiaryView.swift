@@ -1,8 +1,10 @@
 import SwiftUI
-import PhotosUI
 import SwiftData
+import PhotosUI
 
 // MARK: - MainDiaryView
+// Encrypt-only tool: displays ciphertext list, long-press to copy.
+// No decryption, no plaintext preview exists anywhere in this view.
 
 struct MainDiaryView: View {
 
@@ -12,278 +14,259 @@ struct MainDiaryView: View {
     @Query(sort: \DiaryEntry.timestamp, order: .reverse)
     private var entries: [DiaryEntry]
 
-    // Composer state
-    @State private var diaryText = ""
-    @State private var selectedPhotoItem: PhotosPickerItem?
-    @State private var selectedPhotoData: Data?
-    @State private var selectedVideoURL: URL?
-
-    // UI feedback
-    @State private var showCopiedBanner = false
-    @State private var errorMessage: String?
-    @State private var showError = false
+    @State private var showComposer = false
+    @State private var selectedDate = Date()
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    timestampHeader
-                    textEditor
-                    mediaRow
-                    encryptCopyButton
-                    Divider().padding(.top, 8)
-                    entryList
-                }
-                .padding()
+            ZStack(alignment: .bottomTrailing) {
+                entryList
+                addButton
             }
-            .navigationTitle("私密日记")
-            .navigationBarTitleDisplayMode(.large)
-            .alert("错误", isPresented: $showError) {
-                Button("好的", role: .cancel) {}
-            } message: { Text(errorMessage ?? "") }
-            .overlay(alignment: .top) {
-                if showCopiedBanner {
-                    copiedBanner
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
+            .navigationTitle(formattedDate(selectedDate))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { datePicker }
+        }
+        .sheet(isPresented: $showComposer) {
+            ComposerSheet(isPresented: $showComposer)
+                .environmentObject(keyStore)
         }
     }
 
-    // MARK: Subviews
+    // MARK: Date toolbar
 
-    private var timestampHeader: some View {
-        HStack {
-            Image(systemName: "calendar.badge.clock")
-                .foregroundStyle(.secondary)
-            Text(Date(), style: .date)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text(Date(), style: .time)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+    private var datePicker: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            DatePicker("", selection: $selectedDate, displayedComponents: .date)
+                .labelsHidden()
+                .datePickerStyle(.compact)
         }
     }
 
-    private var textEditor: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-            TextEditor(text: $diaryText)
-                .frame(minHeight: 180)
-                .padding(10)
-                .scrollContentBackground(.hidden)
-            if diaryText.isEmpty {
-                Text("写下今天的故事…")
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 18)
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(minHeight: 180)
+    private func formattedDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy年M月d日"
+        return f.string(from: date)
     }
 
-    private var mediaRow: some View {
-        HStack(spacing: 16) {
-            // Photo picker
-            PhotosPicker(selection: $selectedPhotoItem,
-                         matching: .images,
-                         photoLibrary: .shared()) {
-                mediaButton(icon: "photo.on.rectangle.angled",
-                            label: "添加照片",
-                            active: selectedPhotoData != nil)
-            }
-            .onChange(of: selectedPhotoItem) { _, newItem in
-                Task {
-                    selectedPhotoData = try? await newItem?.loadTransferable(type: Data.self)
-                }
-            }
-
-            // Video placeholder (file importer)
-            Button {
-                // Video picking handled via UIDocumentPickerViewController in production;
-                // placeholder tap clears selection for prototype.
-                selectedVideoURL = nil
-            } label: {
-                mediaButton(icon: "video.badge.plus",
-                            label: selectedVideoURL != nil ? "已选视频" : "添加视频",
-                            active: selectedVideoURL != nil)
-            }
-
-            Spacer()
-
-            // Clear media
-            if selectedPhotoData != nil || selectedVideoURL != nil {
-                Button(role: .destructive) {
-                    selectedPhotoData = nil
-                    selectedVideoURL = nil
-                    selectedPhotoItem = nil
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.red.opacity(0.8))
-                }
-            }
-        }
-    }
-
-    private func mediaButton(icon: String, label: String, active: Bool) -> some View {
-        Label(label, systemImage: icon)
-            .font(.subheadline.weight(.medium))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(active ? Color.accentColor.opacity(0.15) : Color(.tertiarySystemBackground))
-            .foregroundStyle(active ? Color.accentColor : Color.secondary)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(active ? Color.accentColor.opacity(0.4) : .clear,
-                                            lineWidth: 1))
-    }
-
-    private var encryptCopyButton: some View {
-        Button(action: encryptAndCopy) {
-            HStack(spacing: 10) {
-                Image(systemName: "lock.doc.fill")
-                Text("一键伪装并复制")
-                    .fontWeight(.semibold)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                LinearGradient(colors: [.indigo, .purple],
-                               startPoint: .leading,
-                               endPoint: .trailing)
-            )
-            .foregroundStyle(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .shadow(color: .purple.opacity(0.35), radius: 8, y: 4)
-        }
-        .disabled(diaryText.trimmingCharacters(in: .whitespaces).isEmpty)
-    }
-
-    private var copiedBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
-            Text("密文已复制到剪贴板")
-                .font(.subheadline.weight(.medium))
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
-        .padding(.top, 8)
-    }
+    // MARK: Entry list
 
     private var entryList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !entries.isEmpty {
-                Text("历史记录")
-                    .font(.headline)
-                    .padding(.bottom, 2)
-            }
-            ForEach(entries) { entry in
-                DiaryRowView(entry: entry, key: keyStore.globalKey)
+        Group {
+            if entries.isEmpty {
+                ContentUnavailableView(
+                    "暂无记录",
+                    systemImage: "fish",
+                    description: Text("点击右下角 + 号添加第一条记录")
+                )
+            } else {
+                List {
+                    ForEach(entries) { entry in
+                        CiphertextRow(entry: entry)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
+                    .onDelete(perform: deleteEntries)
+                }
+                .listStyle(.plain)
             }
         }
     }
 
-    // MARK: Actions
+    private func deleteEntries(at offsets: IndexSet) {
+        for i in offsets { modelContext.delete(entries[i]) }
+        try? modelContext.save()
+    }
 
-    private func encryptAndCopy() {
-        let photoB64 = selectedPhotoData.map { $0.base64EncodedString() } ?? ""
-        let key = keyStore.globalKey
-        guard !key.isEmpty else {
-            errorMessage = "请先在设置中配置全局密钥。"
-            showError = true
-            return
+    // MARK: + button
+
+    private var addButton: some View {
+        Button {
+            showComposer = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color.accentColor)
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
         }
-        do {
-            let cipher = try EncryptionEngine.encryptDiary(
-                text: diaryText,
-                photoB64: photoB64,
-                videoB64: "",
-                key: key
-            )
-            // Persist to SwiftData
-            let entry = DiaryEntry(encryptedData: cipher)
-            modelContext.insert(entry)
-            try? modelContext.save()
-
-            // Copy to clipboard
-            UIPasteboard.general.string = cipher
-
-            // Clear composer
-            diaryText = ""
-            selectedPhotoData = nil
-            selectedPhotoItem = nil
-
-            withAnimation(.spring(response: 0.4)) { showCopiedBanner = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-                withAnimation { showCopiedBanner = false }
-            }
-        } catch {
-            errorMessage = "加密失败：\(error.localizedDescription)"
-            showError = true
-        }
+        .padding(.trailing, 24)
+        .padding(.bottom, 32)
     }
 }
 
-// MARK: - DiaryRowView
+// MARK: - CiphertextRow
+// Long-press to copy. No tap-to-expand. No decryption.
 
-private struct DiaryRowView: View {
+private struct CiphertextRow: View {
 
     let entry: DiaryEntry
-    let key: String
-
-    @State private var preview: String = "（点击解密预览）"
-    @State private var isExpanded = false
+    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "lock.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(entry.timestamp, style: .date)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(entry.timestamp, style: .time)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                if copied {
+                    Label("已复制", systemImage: "checkmark")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                        .transition(.opacity)
+                }
             }
 
-            if isExpanded {
-                Text(preview)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .padding(.top, 2)
-            } else {
-                Text(entry.encryptedData.prefix(60) + "…")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
+            Text(entry.encryptedData)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .truncationMode(.tail)
         }
         .padding(12)
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture {
-            if !isExpanded {
-                decryptPreview()
+        .contextMenu {
+            Button {
+                copyToClipboard()
+            } label: {
+                Label("复制密文", systemImage: "doc.on.doc")
             }
-            withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+        }
+        .onLongPressGesture {
+            copyToClipboard()
         }
     }
 
-    private func decryptPreview() {
-        guard !key.isEmpty else { preview = "未设置密钥"; return }
-        do {
-            let payload = try entry.decrypt(key: key)
-            preview = payload.text
-        } catch {
-            preview = "解密失败，请检查密钥。"
+    private func copyToClipboard() {
+        UIPasteboard.general.string = entry.encryptedData
+        withAnimation { copied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation { copied = false }
+        }
+    }
+}
+
+// MARK: - ComposerSheet
+
+struct ComposerSheet: View {
+
+    @Binding var isPresented: Bool
+    @EnvironmentObject private var keyStore: KeyStore
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var text = ""
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedPhotoData: Data?
+    @State private var errorMessage: String?
+    @State private var isSubmitting = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $text)
+                        .frame(minHeight: 140)
+                        .scrollContentBackground(.hidden)
+                        .overlay(alignment: .topLeading) {
+                            if text.isEmpty {
+                                Text("写点什么…")
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 8)
+                                    .padding(.leading, 4)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                } header: { Text("内容") }
+
+                Section {
+                    PhotosPicker(
+                        selection: $selectedPhotoItem,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        Label(
+                            selectedPhotoData != nil ? "照片已选中" : "添加照片",
+                            systemImage: selectedPhotoData != nil
+                                ? "photo.fill" : "photo.on.rectangle.angled"
+                        )
+                    }
+                    .onChange(of: selectedPhotoItem) { _, item in
+                        Task {
+                            selectedPhotoData = try? await item?.loadTransferable(type: Data.self)
+                        }
+                    }
+
+                    if selectedPhotoData != nil {
+                        Button(role: .destructive) {
+                            selectedPhotoData = nil
+                            selectedPhotoItem = nil
+                        } label: {
+                            Label("移除照片", systemImage: "trash")
+                        }
+                    }
+                } header: { Text("多媒体") }
+
+                if let msg = errorMessage {
+                    Section {
+                        Text(msg).foregroundStyle(.red).font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("新建记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { isPresented = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("发表") { submit() }
+                        .fontWeight(.semibold)
+                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || keyStore.globalKey.isEmpty
+                                  || isSubmitting)
+                }
+            }
+        }
+    }
+
+    private func submit() {
+        let key = keyStore.globalKey
+        guard !key.isEmpty else {
+            errorMessage = "请先在设置中配置全局密钥。"
+            return
+        }
+        isSubmitting = true
+        errorMessage = nil
+
+        Task {
+            do {
+                let photoB64 = selectedPhotoData?.base64EncodedString() ?? ""
+                let cipher = try EncryptionEngine.encryptDiary(
+                    text: text,
+                    photoB64: photoB64,
+                    videoB64: "",
+                    key: key
+                )
+                await MainActor.run {
+                    let entry = DiaryEntry(encryptedData: cipher)
+                    modelContext.insert(entry)
+                    try? modelContext.save()
+                    isPresented = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "加密失败：\(error.localizedDescription)"
+                    isSubmitting = false
+                }
+            }
         }
     }
 }
