@@ -1,0 +1,56 @@
+name: PrivacyDiary
+options:
+  bundleIdPrefix: com.privacy
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+  createIntermediateGroups: true
+
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.privacy.diary
+    PRODUCT_NAME: PrivacyDiary
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_BITCODE: NO
+    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+    SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+    # TrollStore: ad-hoc signing, no provisioning profile needed
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+
+targets:
+  PrivacyDiary:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: .
+        excludes:
+          - "*.yml"
+          - "*.yaml"
+          - "*.md"
+          - "*.py"
+          - ".github/**"
+          - "Payload/**"
+          - "*.ipa"
+    info:
+      path: Info.plist
+    settings:
+      base:
+        INFOPLIST_FILE: Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies: []
+    preBuildScripts: []
+    postBuildScripts: []
+
+schemes:
+  PrivacyDiary:
+    build:
+      targets:
+        PrivacyDiary: all
+    archive:
+      config: Release

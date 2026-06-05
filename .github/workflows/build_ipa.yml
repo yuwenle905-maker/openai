@@ -1,0 +1,76 @@
+name: Build TrollStore IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build PrivacyDiary.ipa
+    runs-on: macos-14
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Select Xcode version ────────────────────────────────────────────
+      - name: Select Xcode 15
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+
+      # ── 3. Install XcodeGen ────────────────────────────────────────────────
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # ── 4. Generate .xcodeproj from project.yml ───────────────────────────
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      # ── 5. Build (no signing) ──────────────────────────────────────────────
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild \
+            -project PrivacyDiary.xcodeproj \
+            -scheme PrivacyDiary \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="${{ github.workspace }}/build/Release-iphoneos" \
+            clean build
+
+      # ── 6. Verify .app was produced ────────────────────────────────────────
+      - name: Verify build output
+        run: |
+          APP_PATH="${{ github.workspace }}/build/Release-iphoneos/PrivacyDiary.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: PrivacyDiary.app not found at $APP_PATH"
+            ls "${{ github.workspace }}/build/Release-iphoneos/" || true
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "Found: $APP_PATH"
+
+      # ── 7. Package as TrollStore-compatible .ipa ───────────────────────────
+      # TrollStore installs plain unsigned IPAs: Payload/<App>.app zipped → .ipa
+      - name: Package as TrollStore IPA
+        run: |
+          cd "${{ github.workspace }}/build/Release-iphoneos"
+          mkdir -p Payload
+          cp -R PrivacyDiary.app Payload/
+          zip -r "${{ github.workspace }}/PrivacyDiary.ipa" Payload
+          echo "IPA size: $(du -sh "${{ github.workspace }}/PrivacyDiary.ipa" | cut -f1)"
+
+      # ── 8. Upload artifact ─────────────────────────────────────────────────
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrivacyDiary-TrollStore
+          path: PrivacyDiary.ipa
+          retention-days: 30
+          if-no-files-found: error
