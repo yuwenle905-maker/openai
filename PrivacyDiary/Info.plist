@@ -38,5 +38,25 @@
     </array>
     <key>UIRequiresFullScreen</key>
     <true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.privacy.diary.backup</string>
+            <key>UTTypeDescription</key>
+            <string>杂鱼备份文件</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>zayu</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
