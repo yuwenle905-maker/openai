@@ -31,8 +31,13 @@ jobs:
       - name: Generate Xcode project
         run: |
           xcodegen generate --spec project.yml
-          echo "=== Project format version ==="
-          grep -m1 "objectVersion\|archiveVersion\|Xcode " PrivacyDiary.xcodeproj/project.pbxproj || true
+          # XcodeGen may emit format 77 (Xcode 16) on the runner even when
+          # xcodeVersion is set to 15.4. Downgrade to format 76 in-place so
+          # Xcode 15.4 can open the project.
+          PBXPROJ="PrivacyDiary.xcodeproj/project.pbxproj"
+          sed -i '' 's/objectVersion = 77/objectVersion = 76/g' "$PBXPROJ"
+          echo "=== Project objectVersion after patch ==="
+          grep -m1 "objectVersion" "$PBXPROJ"
           echo "=== Generated project structure ==="
           find PrivacyDiary.xcodeproj -type f | sort
 
