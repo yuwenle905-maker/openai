@@ -38,7 +38,7 @@ struct EncryptionEngine {
         )
         let jsonData = try JSONEncoder().encode(payload)
         let xored = xorWithKeyStream(data: jsonData, key: key)
-        let stdB64 = xored.base64EncodedData()
+        let stdB64 = xored.base64EncodedData(options: [])
         let shuffled = translateAlphabet(data: stdB64,
                                          from: stdAlpha,
                                          to: buildCustomAlphabet(key: key))
@@ -47,13 +47,16 @@ struct EncryptionEngine {
 
     /// Decrypt a ciphertext string back to a DiaryPayload.
     static func decryptDiary(cipherText: String, key: String) throws -> DiaryPayload {
-        guard let cipherData = cipherText.data(using: .ascii) else {
+        // Strip any whitespace/newlines that may have been introduced by clipboard or display
+        let cleaned = cipherText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines).joined()
+        guard let cipherData = cleaned.data(using: .ascii) else {
             throw EncryptionError.base64DecodingFailed
         }
         let stdB64 = translateAlphabet(data: cipherData,
                                        from: buildCustomAlphabet(key: key),
                                        to: stdAlpha)
-        guard let xored = Data(base64Encoded: stdB64) else {
+        guard let xored = Data(base64Encoded: stdB64, options: .ignoreUnknownCharacters) else {
             throw EncryptionError.base64DecodingFailed
         }
         let plainData = xorWithKeyStream(data: xored, key: key)
