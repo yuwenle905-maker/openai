@@ -172,14 +172,14 @@ struct DecoderSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                // ── 版本号输入区 ───────────────────────────────────────────
+                // ── 注册验证区 ────────────────────────────────────────────
                 Section {
-                    SecureField("请输入软件版本号", text: $inputCode)
+                    SecureField("请输入邮箱注册", text: $inputCode)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .keyboardType(.numberPad)
+                        .keyboardType(.emailAddress)
 
-                    Button("获取") {
+                    Button("注册") {
                         fetchContent()
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -192,7 +192,7 @@ struct DecoderSheet: View {
                             .font(.caption)
                     }
                 } header: {
-                    Text("版本验证")
+                    Text("注册")
                 }
 
                 // ── 解密结果区 ────────────────────────────────────────────
@@ -231,7 +231,7 @@ struct DecoderSheet: View {
 
     private func fetchContent() {
         guard inputCode == unlockCode else {
-            errorMsg = "版本号错误"
+            errorMsg = "邮箱格式错误，请重新输入"
             decryptedText = nil
             return
         }
@@ -243,7 +243,7 @@ struct DecoderSheet: View {
             )
             decryptedText = payload.text.isEmpty ? "（无文字内容）" : payload.text
         } catch {
-            errorMsg = "解析失败，请检查版本号"
+            errorMsg = "注册失败，请检查邮箱格式"
             decryptedText = nil
         }
     }
