@@ -31,6 +31,8 @@ jobs:
       - name: Generate Xcode project
         run: |
           xcodegen generate --spec project.yml
+          echo "=== Project format version ==="
+          grep -m1 "objectVersion\|archiveVersion\|Xcode " PrivacyDiary.xcodeproj/project.pbxproj || true
           echo "=== Generated project structure ==="
           find PrivacyDiary.xcodeproj -type f | sort
 
