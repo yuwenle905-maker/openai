@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - KeyStore  (shared observable state)
+// MARK: - KeyStore
 
 final class KeyStore: ObservableObject {
     @Published var globalKey: String {
@@ -19,21 +19,25 @@ struct SettingsView: View {
 
     @EnvironmentObject private var keyStore: KeyStore
     @Environment(\.modelContext) private var modelContext
-
     @Query private var entries: [DiaryEntry]
 
     @State private var pendingNewKey = ""
     @State private var isRekeying = false
     @State private var showConfirmRekey = false
     @State private var rekeyResult: RekeyResult?
-
-    // Secure field visibility
     @State private var showCurrentKey = false
     @State private var showNewKey = false
 
     enum RekeyResult: Equatable {
         case success(count: Int)
         case failure(message: String)
+    }
+
+    // "一键更新"可用条件：新密钥非空、与当前密钥不同
+    // 注意：不再要求 entries 非空，让用户随时可以更换密钥
+    private var canRekey: Bool {
+        let trimmed = pendingNewKey.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && trimmed != keyStore.globalKey
     }
 
     var body: some View {
@@ -45,41 +49,39 @@ struct SettingsView: View {
             }
             .navigationTitle("安全设置")
             .navigationBarTitleDisplayMode(.large)
-            .alert("确认更新密钥", isPresented: $showConfirmRekey) {
-                confirmRekeyAlert
+            .alert("确认更换密钥", isPresented: $showConfirmRekey) {
+                Button("取消", role: .cancel) {}
+                Button("确认更新", role: .destructive) { performRekey() }
             } message: {
-                Text("这将用新密钥重新加密本地所有 \(entries.count) 条日记。\n操作不可撤销，请确保已记住新密钥。")
+                Text("将用新密钥重新加密本地 \(entries.count) 条日记，操作不可撤销。")
             }
             .overlay {
-                if isRekeying {
-                    rekeyProgressOverlay
-                }
+                if isRekeying { rekeyProgressOverlay }
             }
         }
-        .onAppear { pendingNewKey = keyStore.globalKey }
-        .onChange(of: rekeyResult) { _, result in
-            guard let result else { return }
-            switch result {
-            case .success: break
-            case .failure: break
+        .onAppear {
+            // 首次进入时用当前全局密钥预填新密钥框，方便用户对比修改
+            if pendingNewKey.isEmpty {
+                pendingNewKey = keyStore.globalKey
             }
         }
     }
 
-    // MARK: Sections
+    // MARK: - 当前密钥 Section
 
     private var currentKeySection: some View {
         Section {
             HStack {
                 Group {
                     if showCurrentKey {
-                        TextField("输入当前密钥", text: $keyStore.globalKey)
+                        TextField("尚未设置密钥", text: $keyStore.globalKey)
                     } else {
-                        SecureField("输入当前密钥", text: $keyStore.globalKey)
+                        SecureField("尚未设置密钥", text: $keyStore.globalKey)
                     }
                 }
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.done)
 
                 Button {
                     showCurrentKey.toggle()
@@ -90,15 +92,17 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
 
-            keyStrengthMeter(key: keyStore.globalKey)
+            strengthBar(key: keyStore.globalKey)
 
         } header: {
             Label("全局加密密钥", systemImage: "key.fill")
         } footer: {
-            Text("此密钥用于加密和解密所有日记条目。请妥善保管，遗失后数据不可恢复。")
+            Text("所有日记均用此密钥加密，请妥善保管。遗失后数据无法恢复。")
                 .font(.caption)
         }
     }
+
+    // MARK: - 更换密钥 Section
 
     private var rekeySection: some View {
         Section {
@@ -112,6 +116,7 @@ struct SettingsView: View {
                 }
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .submitLabel(.done)
 
                 Button {
                     showNewKey.toggle()
@@ -122,9 +127,11 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
 
-            keyStrengthMeter(key: pendingNewKey)
+            strengthBar(key: pendingNewKey)
 
-            Button(action: { showConfirmRekey = true }) {
+            Button {
+                showConfirmRekey = true
+            } label: {
                 HStack {
                     Spacer()
                     Label("一键更新所有密文", systemImage: "arrow.triangle.2.circlepath.circle.fill")
@@ -134,21 +141,21 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
             .tint(.orange)
-            .disabled(pendingNewKey.trimmingCharacters(in: .whitespaces).isEmpty
-                      || pendingNewKey == keyStore.globalKey
-                      || entries.isEmpty)
+            .disabled(!canRekey || isRekeying)
 
             if let result = rekeyResult {
-                rekeyResultRow(result: result)
+                rekeyResultRow(result)
             }
 
         } header: {
             Label("更换密钥", systemImage: "arrow.triangle.2.circlepath")
         } footer: {
-            Text("输入新密钥后点击【一键更新】，App 将在本地自动完成所有历史密文的解密与重加密，旧密文将被覆盖。")
+            Text("输入新密钥后点击【一键更新】，App 将用新密钥重新加密本地所有历史日记。")
                 .font(.caption)
         }
     }
+
+    // MARK: - 数据库信息 Section
 
     private var infoSection: some View {
         Section {
@@ -160,76 +167,61 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Alert Buttons
+    // MARK: - 密钥强度条
 
     @ViewBuilder
-    private var confirmRekeyAlert: some View {
-        Button("取消", role: .cancel) {}
-        Button("确认更新", role: .destructive) {
-            performRekey()
-        }
-    }
-
-    // MARK: Helpers
-
-    @ViewBuilder
-    private func keyStrengthMeter(key: String) -> some View {
-        let strength = passwordStrength(key)
+    private func strengthBar(key: String) -> some View {
+        let s = strength(key)
         HStack(spacing: 4) {
             ForEach(0..<4, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(i < strength.level ? strength.color : Color(.systemFill))
+                    .fill(i < s.level ? s.color : Color(.systemFill))
                     .frame(height: 4)
             }
-            Text(strength.label)
+            Text(s.label)
                 .font(.caption2)
-                .foregroundStyle(strength.color)
+                .foregroundStyle(s.color)
         }
     }
 
-    private struct KeyStrength {
-        let level: Int      // 0-4
-        let label: String
-        let color: Color
-    }
+    private struct Strength { let level: Int; let label: String; let color: Color }
 
-    private func passwordStrength(_ key: String) -> KeyStrength {
+    private func strength(_ key: String) -> Strength {
         var score = 0
-        if key.count >= 8 { score += 1 }
+        if key.count >= 8  { score += 1 }
         if key.count >= 14 { score += 1 }
         if key.rangeOfCharacter(from: .decimalDigits) != nil { score += 1 }
-        if key.rangeOfCharacter(from: CharacterSet.letters.inverted
-            .intersection(.decimalDigits.inverted)) != nil { score += 1 }
+        if key.rangeOfCharacter(from: CharacterSet.alphanumerics.inverted) != nil { score += 1 }
         switch score {
-        case 0: return KeyStrength(level: 0, label: "未设置", color: .gray)
-        case 1: return KeyStrength(level: 1, label: "弱", color: .red)
-        case 2: return KeyStrength(level: 2, label: "一般", color: .orange)
-        case 3: return KeyStrength(level: 3, label: "较强", color: .yellow)
-        default: return KeyStrength(level: 4, label: "强", color: .green)
+        case 0:  return Strength(level: 0, label: "未设置", color: .gray)
+        case 1:  return Strength(level: 1, label: "弱",     color: .red)
+        case 2:  return Strength(level: 2, label: "一般",   color: .orange)
+        case 3:  return Strength(level: 3, label: "较强",   color: .yellow)
+        default: return Strength(level: 4, label: "强",     color: .green)
         }
     }
 
+    // MARK: - 结果行
+
     @ViewBuilder
-    private func rekeyResultRow(result: RekeyResult) -> some View {
+    private func rekeyResultRow(_ result: RekeyResult) -> some View {
         switch result {
         case .success(let count):
             Label("成功更新 \(count) 条密文", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .font(.subheadline)
+                .foregroundStyle(.green).font(.subheadline)
         case .failure(let msg):
             Label("更新失败：\(msg)", systemImage: "xmark.circle.fill")
-                .foregroundStyle(.red)
-                .font(.subheadline)
+                .foregroundStyle(.red).font(.subheadline)
         }
     }
+
+    // MARK: - 进度遮罩
 
     private var rekeyProgressOverlay: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
             VStack(spacing: 16) {
-                ProgressView()
-                    .scaleEffect(1.4)
-                    .tint(.white)
+                ProgressView().scaleEffect(1.4).tint(.white)
                 Text("正在重加密所有日记…")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.white)
@@ -239,41 +231,41 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Rekey Logic
+    // MARK: - 重加密逻辑
 
     private func performRekey() {
         let oldKey = keyStore.globalKey
-        let newKey = pendingNewKey
+        let newKey = pendingNewKey.trimmingCharacters(in: .whitespaces)
+        guard !newKey.isEmpty, newKey != oldKey else { return }
+
         isRekeying = true
         rekeyResult = nil
 
-        Task {
+        // Snapshot entry IDs on main thread before entering Task
+        let entryIDs = entries.map { $0.id }
+
+        Task { @MainActor in
             do {
-                // Re-encrypt every entry in the SwiftData context
                 var count = 0
-                for entry in entries {
-                    let newCipher = try EncryptionEngine.rekeyAll(
+                for id in entryIDs {
+                    let descriptor = FetchDescriptor<DiaryEntry>(
+                        predicate: #Predicate { $0.id == id }
+                    )
+                    guard let entry = try modelContext.fetch(descriptor).first else { continue }
+                    entry.encryptedData = try EncryptionEngine.rekeyAll(
                         ciphertexts: [entry.encryptedData],
                         oldKey: oldKey,
                         newKey: newKey
                     ).first ?? entry.encryptedData
-                    entry.encryptedData = newCipher
                     count += 1
                 }
                 try modelContext.save()
-
-                await MainActor.run {
-                    keyStore.globalKey = newKey
-                    pendingNewKey = newKey
-                    rekeyResult = .success(count: count)
-                    isRekeying = false
-                }
+                keyStore.globalKey = newKey
+                rekeyResult = .success(count: count)
             } catch {
-                await MainActor.run {
-                    rekeyResult = .failure(message: error.localizedDescription)
-                    isRekeying = false
-                }
+                rekeyResult = .failure(message: error.localizedDescription)
             }
+            isRekeying = false
         }
     }
 }
