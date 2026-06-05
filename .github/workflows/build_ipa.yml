@@ -29,50 +29,63 @@ jobs:
 
       # ── 4. Generate .xcodeproj ────────────────────────────────────────────
       - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
+        run: |
+          xcodegen generate --spec project.yml
+          echo "=== Generated project structure ==="
+          find PrivacyDiary.xcodeproj -type f | sort
 
-      # ── 5. Build (no signing) ──────────────────────────────────────────────
-      - name: Build app (unsigned)
+      # ── 5. Show available schemes & SDKs (diagnostic) ─────────────────────
+      - name: List schemes and SDKs
+        run: |
+          xcodebuild -project PrivacyDiary.xcodeproj -list
+          xcodebuild -showsdks
+
+      # ── 6. Build (unsigned, arm64 device slice) ───────────────────────────
+      - name: Build app
         run: |
           set -o pipefail
           xcodebuild \
             -project PrivacyDiary.xcodeproj \
             -scheme PrivacyDiary \
             -configuration Release \
-            -sdk iphoneos \
             -destination "generic/platform=iOS" \
-            CODE_SIGN_IDENTITY="-" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             CONFIGURATION_BUILD_DIR="${{ github.workspace }}/build/Release-iphoneos" \
-            -showBuildTimingSummary \
-            clean build 2>&1 | tee build.log
-        env:
-          NSUnbufferedIO: YES
+            clean build \
+            2>&1 | tee build.log; EXIT=${PIPESTATUS[0]}
+          if [ $EXIT -ne 0 ]; then
+            echo ""
+            echo "========== LAST 100 LINES OF BUILD LOG =========="
+            tail -100 build.log
+            exit $EXIT
+          fi
 
-      # ── 6. Upload build log on failure ────────────────────────────────────
-      - name: Upload build log on failure
-        if: failure()
+      # ── 7. Upload full build log (always, for inspection) ─────────────────
+      - name: Upload build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
           retention-days: 7
 
-      # ── 7. Verify .app was produced ────────────────────────────────────────
+      # ── 8. Verify .app was produced ────────────────────────────────────────
       - name: Verify build output
         run: |
           APP_PATH="${{ github.workspace }}/build/Release-iphoneos/PrivacyDiary.app"
           if [ ! -d "$APP_PATH" ]; then
             echo "ERROR: PrivacyDiary.app not found"
-            ls "${{ github.workspace }}/build/Release-iphoneos/" || true
+            ls -la "${{ github.workspace }}/build/Release-iphoneos/" || true
             exit 1
           fi
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "Found: $APP_PATH"
 
-      # ── 8. Package as TrollStore-compatible .ipa ──────────────────────────
-      # TrollStore installs plain unsigned IPAs: Payload/<App>.app zipped → .ipa
+      # ── 9. Package as TrollStore-compatible .ipa ──────────────────────────
       - name: Package as TrollStore IPA
         run: |
           cd "${{ github.workspace }}/build/Release-iphoneos"
@@ -81,7 +94,7 @@ jobs:
           zip -r "${{ github.workspace }}/PrivacyDiary.ipa" Payload
           echo "IPA size: $(du -sh "${{ github.workspace }}/PrivacyDiary.ipa" | cut -f1)"
 
-      # ── 9. Upload IPA artifact ─────────────────────────────────────────────
+      # ── 10. Upload IPA artifact ────────────────────────────────────────────
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
