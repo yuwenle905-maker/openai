@@ -133,7 +133,7 @@ struct MainDiaryView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(active ? Color.accentColor.opacity(0.15) : Color(.tertiarySystemBackground))
-            .foregroundStyle(active ? .accent : .secondary)
+            .foregroundStyle(active ? Color.accentColor : Color.secondary)
             .clipShape(Capsule())
             .overlay(Capsule().strokeBorder(active ? Color.accentColor.opacity(0.4) : .clear,
                                             lineWidth: 1))

@@ -31,7 +31,7 @@ struct SettingsView: View {
     @State private var showCurrentKey = false
     @State private var showNewKey = false
 
-    enum RekeyResult {
+    enum RekeyResult: Equatable {
         case success(count: Int)
         case failure(message: String)
     }
@@ -145,7 +145,7 @@ struct SettingsView: View {
         } header: {
             Label("更换密钥", systemImage: "arrow.triangle.2.circlepath")
         } footer: {
-            Text("输入新密钥后点击"一键更新"，App 将在本地自动完成所有历史密文的解密与重加密，旧密文将被覆盖。")
+            Text("输入新密钥后点击【一键更新】，App 将在本地自动完成所有历史密文的解密与重加密，旧密文将被覆盖。")
                 .font(.caption)
         }
     }
