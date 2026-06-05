@@ -2,7 +2,7 @@ name: PrivacyDiary
 options:
   bundleIdPrefix: com.privacy
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "17.0"
   xcodeVersion: "15.4"
   generateEmptyDirectories: true
   createIntermediateGroups: true
@@ -12,20 +12,25 @@ settings:
     PRODUCT_BUNDLE_IDENTIFIER: com.privacy.diary
     PRODUCT_NAME: PrivacyDiary
     SWIFT_VERSION: "5.9"
-    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
     ENABLE_BITCODE: NO
-    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
-    SWIFT_OPTIMIZATION_LEVEL: "-Onone"
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGNING_REQUIRED: NO
     CODE_SIGNING_ALLOWED: NO
+  configs:
+    Debug:
+      DEBUG_INFORMATION_FORMAT: dwarf
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+    Release:
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
 
 targets:
   PrivacyDiary:
     type: application
     platform: iOS
-    deploymentTarget: "15.0"
+    deploymentTarget: "17.0"
     sources:
       - path: PrivacyDiary
         excludes:

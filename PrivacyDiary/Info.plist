@@ -30,14 +30,9 @@
     <string>需要访问相机以便拍摄照片或视频添加到日记条目中。</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>需要访问麦克风以便录制视频时同步录音。</string>
-    <key>UIApplicationSceneManifest</key>
-    <dict>
-        <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
-    </dict>
     <key>UILaunchScreen</key>
     <dict/>
-    <key>UISupportedInterfaceOrientations</key>
+<key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
     </array>

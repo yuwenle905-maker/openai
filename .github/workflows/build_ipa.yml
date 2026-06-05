@@ -17,21 +17,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Select Xcode version ────────────────────────────────────────────
-      - name: Select Xcode 15
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+      # ── 2. Select Xcode 15.4 ──────────────────────────────────────────────
+      - name: Select Xcode 15.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
 
       # ── 3. Install XcodeGen ────────────────────────────────────────────────
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # ── 4. Generate .xcodeproj from project.yml ───────────────────────────
+      # ── 4. Generate .xcodeproj ────────────────────────────────────────────
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
       # ── 5. Build (no signing) ──────────────────────────────────────────────
       - name: Build app (unsigned)
         run: |
+          set -o pipefail
           xcodebuild \
             -project PrivacyDiary.xcodeproj \
             -scheme PrivacyDiary \
@@ -42,21 +45,33 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CONFIGURATION_BUILD_DIR="${{ github.workspace }}/build/Release-iphoneos" \
-            clean build
+            -showBuildTimingSummary \
+            clean build 2>&1 | tee build.log
+        env:
+          NSUnbufferedIO: YES
 
-      # ── 6. Verify .app was produced ────────────────────────────────────────
+      # ── 6. Upload build log on failure ────────────────────────────────────
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      # ── 7. Verify .app was produced ────────────────────────────────────────
       - name: Verify build output
         run: |
           APP_PATH="${{ github.workspace }}/build/Release-iphoneos/PrivacyDiary.app"
           if [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: PrivacyDiary.app not found at $APP_PATH"
+            echo "ERROR: PrivacyDiary.app not found"
             ls "${{ github.workspace }}/build/Release-iphoneos/" || true
             exit 1
           fi
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "Found: $APP_PATH"
 
-      # ── 7. Package as TrollStore-compatible .ipa ───────────────────────────
+      # ── 8. Package as TrollStore-compatible .ipa ──────────────────────────
       # TrollStore installs plain unsigned IPAs: Payload/<App>.app zipped → .ipa
       - name: Package as TrollStore IPA
         run: |
@@ -66,7 +81,7 @@ jobs:
           zip -r "${{ github.workspace }}/PrivacyDiary.ipa" Payload
           echo "IPA size: $(du -sh "${{ github.workspace }}/PrivacyDiary.ipa" | cut -f1)"
 
-      # ── 8. Upload artifact ─────────────────────────────────────────────────
+      # ── 9. Upload IPA artifact ─────────────────────────────────────────────
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
