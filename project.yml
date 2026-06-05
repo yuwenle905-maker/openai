@@ -39,7 +39,6 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: PrivacyDiary/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies: []
 
 schemes:

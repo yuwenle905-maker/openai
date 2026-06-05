@@ -29,9 +29,13 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # ── 3b. Generate app icon ─────────────────────────────────────────────
+      # ── 3b. Pre-generate fish app icon ───────────────────────────────────
+      # actool crashes in CI without simulator runtimes, so we skip the asset
+      # catalog entirely and inject the icon PNG directly after build.
       - name: Generate fish app icon
-        run: python3 gen_icon.py
+        run: |
+          python3 gen_icon.py
+          ls -lh AppIcon-1024.png
 
       # ── 4. Generate .xcodeproj ────────────────────────────────────────────
       - name: Generate Xcode project
@@ -92,6 +96,18 @@ jobs:
           fi
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "Found: $APP_PATH"
+
+      # ── 8b. Inject app icon directly into .app bundle ─────────────────────
+      # Bypasses actool/asset catalog which requires simulator runtimes in CI.
+      - name: Inject app icon
+        run: |
+          APP="${{ github.workspace }}/build/Release-iphoneos/PrivacyDiary.app"
+          # Resize 1024→60@2x(120), 60@3x(180), 76@2x(152) using sips
+          sips -z 120 120 AppIcon-1024.png --out "$APP/AppIcon60x60@2x.png"
+          sips -z 180 180 AppIcon-1024.png --out "$APP/AppIcon60x60@3x.png"
+          sips -z 152 152 AppIcon-1024.png --out "$APP/AppIcon76x76@2x~ipad.png"
+          sips -z 1024 1024 AppIcon-1024.png --out "$APP/AppIcon-1024.png"
+          echo "Icons injected into $APP"
 
       # ── 9. Package as TrollStore-compatible .ipa ──────────────────────────
       - name: Package as TrollStore IPA

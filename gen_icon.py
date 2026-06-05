@@ -165,7 +165,7 @@ png += png_chunk(b"IEND", b"")
 
 out_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "PrivacyDiary", "Assets.xcassets", "AppIcon.appiconset", "AppIcon-1024.png"
+    "AppIcon-1024.png"
 )
 with open(out_path, "wb") as f:
     f.write(png)
