@@ -64,6 +64,13 @@ struct DashboardView: View {
                     )
                     .padding(.horizontal)
 
+                    ProfileCard(
+                        title: "线索金额分布",
+                        profiles: ROIEngine.amountProfiles(customers: monthCustomers)
+                            .map { ($0.label, $0.count, $0.percentageText) }
+                    )
+                    .padding(.horizontal)
+
                     Spacer(minLength: 32)
                 }
                 .padding(.top)

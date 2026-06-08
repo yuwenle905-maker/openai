@@ -189,4 +189,29 @@ enum ROIEngine {
             )
         }.filter { $0.count > 0 }
     }
+
+    // MARK: 金额/单价分类统计（需求5）
+    // 300以内 / 301-500元 / 500元以上
+    static func amountProfiles(customers: [Customer]) -> [AgeProfile] {
+        // 取每个客户最近一笔转化的金额作为"线索单价"
+        let amounts: [Double] = customers.compactMap { c in
+            c.conversions.sorted { $0.date > $1.date }.first?.amount
+        }
+        let total = amounts.count
+        guard total > 0 else { return [] }
+
+        let bands: [(String, (Double) -> Bool)] = [
+            ("300元以内",      { $0 <= 300 }),
+            ("301-500元",     { $0 > 300 && $0 <= 500 }),
+            ("500元以上",      { $0 > 500 }),
+        ]
+        return bands.map { (label, pred) in
+            let count = amounts.filter(pred).count
+            return AgeProfile(
+                label: label,
+                count: count,
+                percentage: Double(count) / Double(total)
+            )
+        }.filter { $0.count > 0 }
+    }
 }
