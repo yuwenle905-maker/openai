@@ -218,6 +218,10 @@ struct TextInputView: View {
         case .second:   return .green
         case .third:    return .orange
         case .fourth:   return .purple
+        case .fifth:    return .red
+        case .sixth:    return .indigo
+        case .seventh:  return .teal
+        case .eighth:   return .cyan
         case .unknown:  return .gray
         }
     }

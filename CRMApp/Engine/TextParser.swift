@@ -30,12 +30,16 @@ struct TextParseError: Identifiable {
 // MARK: 主解析器
 enum TextParser {
 
-    // 状态关键词表（按优先级顺序）
+    // 状态关键词表（从高往低匹配，防止数字误匹配）
     private static let conversionKeywords: [(keywords: [String], type: ConversionType)] = [
-        (["四次", "4次", "第四"],  .fourth),
-        (["三次", "3次", "第三"],  .third),
-        (["二次", "2次", "第二", "复购"], .second),
-        (["新单", "首单", "一次", "1次", "第一", "新"], .newOrder),
+        (["八次", "8次", "第八"],                        .eighth),
+        (["七次", "7次", "第七"],                        .seventh),
+        (["六次", "6次", "第六"],                        .sixth),
+        (["五次", "5次", "第五"],                        .fifth),
+        (["四次", "4次", "第四"],                        .fourth),
+        (["三次", "3次", "第三"],                        .third),
+        (["二次", "2次", "第二", "复购"],                .second),
+        (["新单", "首单", "一次", "1次", "第一", "新"],  .newOrder),
     ]
 
     // 末尾金额正则：匹配行末的数字（含小数）

@@ -70,14 +70,20 @@ enum SmartPasteParser {
     )
 
     // 流水关键词（无电话 + 含这些词 → ledgerEntry）
-    private static let ledgerKeywords = ["新单","首单","二次","三次","四次","复购"]
+    private static let ledgerKeywords = [
+        "新单","首单","二次","三次","四次","五次","六次","七次","八次","复购"
+    ]
 
-    // 转化类型优先级表
+    // 转化类型优先级表（从高往低，防止"三次"误匹配"二次"中的"次"字）
     private static let convKwTable: [(keys: [String], type: ConversionType)] = [
-        (["四次","4次","第四"],             .fourth),
-        (["三次","3次","第三"],             .third),
-        (["二次","2次","第二","复购"],       .second),
-        (["新单","首单","一次","1次","新"],  .newOrder),
+        (["八次","8次","第八"],              .eighth),
+        (["七次","7次","第七"],              .seventh),
+        (["六次","6次","第六"],              .sixth),
+        (["五次","5次","第五"],              .fifth),
+        (["四次","4次","第四"],              .fourth),
+        (["三次","3次","第三"],              .third),
+        (["二次","2次","第二","复购"],        .second),
+        (["新单","首单","一次","1次","新"],   .newOrder),
     ]
 
     // 地址特征词（用于识别哪些 token 属于地址）

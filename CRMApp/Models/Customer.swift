@@ -15,6 +15,10 @@ enum ConversionType: String, Codable, CaseIterable {
     case second   = "二次"
     case third    = "三次"
     case fourth   = "四次"
+    case fifth    = "五次"
+    case sixth    = "六次"
+    case seventh  = "七次"
+    case eighth   = "八次"
     case unknown  = "未知"
 }
 
