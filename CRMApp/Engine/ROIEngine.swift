@@ -52,13 +52,22 @@ struct ProfileItem: Identifiable {
 enum ROIEngine {
 
     // MARK: 期间汇总
+    // customers    = 完整客户（用于漏斗分母、画像）
+    // allCustomers = 所有客户含流水（用于营业额）
     static func summary(customers: [Customer], leadUnitPrice: Double) -> PeriodSummary {
-        let leadCount    = customers.count
-        // 营业额：只统计手动录入的 ConversionRecord.amount
+        let leadCount = customers.filter { $0.dataType == .fullCustomer }.count
+        // 营业额：所有客户（含流水条目）的 ConversionRecord.amount 之和
         let totalRevenue = customers.flatMap { $0.conversions }.reduce(0) { $0 + $1.amount }
-        // 成本：累加每个客户入库时固化的 lineCost（历史单价留存，不受后续改价影响）
-        let totalCost    = customers.reduce(0) { $0 + $1.lineCost }
-        let stages       = buildFunnel(customers: customers, totalLeads: leadCount)
+        // 成本：只算完整客户的 lineCost（流水条目不计成本）
+        let totalCost = customers
+            .filter { $0.dataType == .fullCustomer }
+            .reduce(0) { $0 + $1.lineCost }
+        // 漏斗：分母只用完整客户线索数，金额统计所有客户
+        let stages = buildFunnel(
+            fullCustomers: customers.filter { $0.dataType == .fullCustomer },
+            allCustomers:  customers,
+            totalLeads:    leadCount
+        )
         return PeriodSummary(
             importedLeadCount: leadCount,
             totalCost:         totalCost,
@@ -68,7 +77,13 @@ enum ROIEngine {
     }
 
     // MARK: 漏斗（显示到五次）
-    private static func buildFunnel(customers: [Customer], totalLeads: Int) -> [FunnelStage] {
+    // fullCustomers：用于转化率分子/分母（只算有电话地址的完整客户）
+    // allCustomers ：用于金额统计（含流水录入的成交金额）
+    private static func buildFunnel(
+        fullCustomers: [Customer],
+        allCustomers:  [Customer],
+        totalLeads:    Int
+    ) -> [FunnelStage] {
         let types: [(ConversionType, String)] = [
             (.newOrder, "新单"),
             (.second,   "二次"),
@@ -78,19 +93,22 @@ enum ROIEngine {
         ]
         var result:   [FunnelStage] = []
         var prevCount = totalLeads
+
         for (type, label) in types {
-            let matched = customers.filter { $0.conversions.contains { $0.type == type } }
-            let count   = matched.count
-            // 漏斗金额：只统计来自流水录入的 ConversionRecord.amount（不含 leadAmount）
-            let amount  = matched
+            // 转化人数：完整客户中有该类型记录的人数
+            let count = fullCustomers.filter { $0.conversions.contains { $0.type == type } }.count
+            // 转化金额：所有客户（含流水）该类型的金额之和
+            let amount = allCustomers
                 .flatMap { $0.conversions.filter { $0.type == type } }
                 .reduce(0) { $0 + $1.amount }
             let rate: Double = prevCount > 0 ? Double(count) / Double(prevCount) : 0
             result.append(FunnelStage(label: label, count: count,
                                       totalAmount: amount, conversionRate: rate,
                                       denominator: prevCount))
-            prevCount = count
+            prevCount = max(count, 0)
         }
+        return result
+    }
         return result
     }
 
