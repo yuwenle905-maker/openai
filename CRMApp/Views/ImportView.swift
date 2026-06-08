@@ -1,227 +1,409 @@
 // MARK: - ImportView.swift
-// 文件导入界面 — 文档选择器 + 弹窗调度（iOS 15 兼容）
+// 智能粘贴导入界面（废弃文件选择，改为文本粘贴 + 逐条确认 + 去重弹窗）
 
 import SwiftUI
 
+// MARK: - 主界面
 struct ImportView: View {
 
     @EnvironmentObject var store: DataStore
-    // 修复：使用 @EnvironmentObject 注入的全局 store，而非创建孤立副本
-    @StateObject private var engine: ImportEngine
-
-    @State private var showingFilePicker = false
-
-    init() {
-        // engine 在 onAppear 中用真实 store 重新初始化，此处占位
-        _engine = StateObject(wrappedValue: ImportEngine(store: DataStore()))
-    }
+    @State private var pasteText:       String = ""
+    @State private var parsedRows:      [ParsedRow]      = []
+    @State private var failedRows:      [ParseFailedRow] = []
+    @State private var showConfirmSheet = false
+    @FocusState private var textFocused: Bool
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
-                DropZoneView { showingFilePicker = true }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+
+                    // ── 说明卡片 ───────────────────────────────
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("直接粘贴数据，系统自动解析")
+                            .font(.headline)
+                        Text("支持格式：姓名 电话 地址 商品 金额 身高/体重/年龄 快递单号")
+                            .font(.caption).foregroundColor(.secondary)
+                        Text("也支持流水格式：张三 新单 4280（不产生新客户）")
+                            .font(.caption).foregroundColor(.orange)
+                    }
                     .padding()
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .cornerRadius(12)
+                    .padding(.horizontal)
 
-                if !engine.events.isEmpty {
-                    ImportLogView(events: engine.events)
+                    // ── 粘贴文本框 ────────────────────────────
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("粘贴数据")
+                                .font(.subheadline.bold())
+                            Spacer()
+                            if !pasteText.isEmpty {
+                                Button("清空") {
+                                    pasteText   = ""
+                                    parsedRows  = []
+                                    failedRows  = []
+                                    textFocused = false
+                                }
+                                .font(.caption)
+                                .foregroundColor(.red)
+                            }
+                        }
+                        .padding(.horizontal)
+
+                        TextEditor(text: $pasteText)
+                            .focused($textFocused)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 180, maxHeight: 320)
+                            .padding(8)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                            .padding(.horizontal)
+                    }
+
+                    // ── 操作按钮 ─────────────────────────────
+                    HStack(spacing: 12) {
+                        Button {
+                            textFocused = false
+                            let result  = SmartPasteParser.parse(pasteText)
+                            parsedRows  = result.rows
+                            failedRows  = result.failed
+                            if !parsedRows.isEmpty { showConfirmSheet = true }
+                        } label: {
+                            Label("解析并预览", systemImage: "text.magnifyingglass")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                            ? Color.gray : Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                        }
+                        .disabled(pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Button {
+                            textFocused = false
+                        } label: {
+                            Image(systemName: "keyboard.chevron.compact.down")
+                                .padding(10)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .cornerRadius(10)
+                        }
+                    }
+                    .padding(.horizontal)
+
+                    // ── 解析失败提示 ─────────────────────────
+                    if !failedRows.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("无法解析的行（\(failedRows.count) 条）")
+                                .font(.caption.bold()).foregroundColor(.red)
+                                .padding(.horizontal).padding(.top, 8)
+                            Divider()
+                            ForEach(failedRows) { row in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("第\(row.lineNumber)行：\(row.rawLine)")
+                                        .font(.caption.monospaced()).lineLimit(2)
+                                    Text(row.reason).font(.caption2).foregroundColor(.red)
+                                }
+                                .padding(.horizontal).padding(.vertical, 6)
+                                Divider()
+                            }
+                        }
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
+                    }
+
+                    Spacer(minLength: 40)
                 }
-                Spacer()
+                .padding(.top)
             }
-            .navigationTitle("导入数据")
-            // 根本修复：只传 .data 让系统不过滤任何文件
-            // xlsx/xls/csv 在 iOS 上 UTType 注册不稳定，.data 兜底最可靠
-            .fileImporter(
-                isPresented: $showingFilePicker,
-                allowedContentTypes: [.data],
-                allowsMultipleSelection: false
-            ) { result in
-                handleFilePick(result)
-            }
-            .sheet(isPresented: $engine.showingEditSheet) {
-                if let partial = engine.pendingReviewRow {
-                    ManualReviewSheet(
-                        partial:   partial,
-                        onConfirm: { updated in engine.confirmReview(updated: updated) },
-                        onSkip:    { engine.skipReview() }
-                    )
-                }
-            }
-            .confirmationDialog(
-                "检测到重复电话号码",
-                isPresented: $engine.showingDuplicateSheet,
-                titleVisibility: .visible
-            ) {
-                Button("覆盖原记录", role: .destructive) { engine.resolveDuplicate(resolution: .overwrite) }
-                Button("追加转化记录（合并）")              { engine.resolveDuplicate(resolution: .merge)     }
-                Button("跳过此条",  role: .cancel)        { engine.resolveDuplicate(resolution: .skip)      }
-            } message: {
-                if let pair = engine.pendingDuplicateRow {
-                    Text("已有客户：\(pair.existing.name)（\(pair.existing.phone)）\n请选择处理方式。")
-                }
-            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("智能导入")
+            .onTapGesture { textFocused = false }
         }
-        // 修复：engine 绑定到真实的全局 store
-        .onAppear {
-            engine.rebind(store: store)
+        // 确认弹窗
+        .sheet(isPresented: $showConfirmSheet) {
+            ImportConfirmSheet(
+                rows:      parsedRows,
+                failed:    failedRows,
+                onConfirm: { confirmed in
+                    commitToStore(rows: confirmed)
+                    showConfirmSheet = false
+                    pasteText  = ""
+                    parsedRows = []
+                    failedRows = []
+                },
+                onCancel: { showConfirmSheet = false }
+            )
+            .environmentObject(store)
         }
     }
 
-    private func handleFilePick(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let url = urls.first else { return }
-        guard url.startAccessingSecurityScopedResource() else { return }
-        defer { url.stopAccessingSecurityScopedResource() }
-        // 真实场景：此处解析 xlsx/csv；当前用 mock 数据演示流程
-        let mockRows = mockRawRows(from: url)
-        engine.startImport(rows: mockRows, fileName: url.lastPathComponent, hasHeaders: true)
-    }
+    // MARK: 入库逻辑（带去重）
+    private func commitToStore(rows: [ParsedRow]) {
+        var batchImported = 0
+        var batchFull     = 0
+        let batchID       = UUID()
 
-    private func mockRawRows(from url: URL) -> [RawRow] {
-        [
-            RawRow(index: 0, cells: ["姓名", "手机号", "地址", "年龄", "身高", "体重"]),
-            RawRow(index: 1, cells: ["张三", "13812345678", "广州市天河区",   "28", "175", "70"]),
-            RawRow(index: 2, cells: ["李四", "13698765432", "上海市浦东新区", "35", "168", "65"]),
-            RawRow(index: 3, cells: ["王五", "13511112222", "深圳市南山区",   "",   "172", ""]),
-        ]
+        for row in rows {
+            let record = ConversionRecord(
+                type:        row.conversionType,
+                amount:      row.amount ?? 0,
+                date:        Date(),
+                productNote: row.productNote
+            )
+
+            // 流水记录：只追加转化，不新增客户
+            if row.dataType == .ledgerEntry {
+                if let idx = store.customers.firstIndex(where: { $0.name == row.name }) {
+                    store.customers[idx].conversions.append(record)
+                    store.save()
+                }
+                // 若客户不存在也不创建（流水记录语义）
+                continue
+            }
+
+            // 完整客户：先检查去重
+            let phone = row.phone ?? "unknown_\(row.name)"
+            if let _ = store.findExisting(phone: phone) {
+                // 冲突：UI 层已在确认弹窗处理，此处走合并（默认策略）
+                if let idx = store.customers.firstIndex(where: { $0.phone == phone }) {
+                    store.customers[idx].conversions.append(record)
+                    store.save()
+                }
+            } else {
+                let customer = Customer(
+                    name:          row.name,
+                    phone:         phone,
+                    address:       row.address,
+                    age:           row.age,
+                    height:        row.height,
+                    weight:        row.weight,
+                    dataType:      .fullCustomer,
+                    importBatchID: batchID,
+                    importDate:    Date(),
+                    conversions:   [record]
+                )
+                store.addCustomer(customer)
+                batchFull += 1
+            }
+            batchImported += 1
+        }
+
+        let batch = ImportBatch(
+            id:                batchID,
+            source:            "智能粘贴",
+            importDate:        Date(),
+            recordCount:       batchImported,
+            fullCustomerCount: batchFull
+        )
+        store.addBatch(batch)
     }
 }
 
-// MARK: - 拖放区域
-struct DropZoneView: View {
-    let action: () -> Void
+// MARK: - 确认弹窗 Sheet
+struct ImportConfirmSheet: View {
+
+    @EnvironmentObject var store: DataStore
+    let rows:      [ParsedRow]
+    let failed:    [ParseFailedRow]
+    let onConfirm: ([ParsedRow]) -> Void
+    let onCancel:  () -> Void
+
+    // 去重冲突处理
+    @State private var conflictRow:       ParsedRow?
+    @State private var showConflict       = false
+    @State private var confirmedRows:     [ParsedRow]
+    @State private var pendingQueue:      [ParsedRow]
+    @State private var processedRows:     [ParsedRow] = []
+
+    init(rows: [ParsedRow], failed: [ParseFailedRow],
+         onConfirm: @escaping ([ParsedRow]) -> Void,
+         onCancel: @escaping () -> Void) {
+        self.rows      = rows
+        self.failed    = failed
+        self.onConfirm = onConfirm
+        self.onCancel  = onCancel
+        _confirmedRows = State(initialValue: rows)
+        _pendingQueue  = State(initialValue: [])
+    }
+
+    var fullCustomerCount: Int { confirmedRows.filter { $0.isFullCustomer }.count }
+    var ledgerCount:       Int { confirmedRows.filter { $0.dataType == .ledgerEntry }.count }
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 16) {
-                Image(systemName: "arrow.down.doc.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.blue)
-                Text("点击选择文件")
-                    .font(.headline)
-                Text("支持 .xlsx / .xls / .csv")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+        NavigationView {
+            List {
+                // 汇总卡
+                Section {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("共解析 \(confirmedRows.count) 条")
+                                .font(.headline)
+                            Text("新客户 \(fullCustomerCount) 人 · 流水记录 \(ledgerCount) 条")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green).font(.title2)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                // 逐条预览
+                Section(header: Text("解析结果预览（可左滑删除不需要的行）")) {
+                    ForEach($confirmedRows) { $row in
+                        ParsedRowCell(row: $row)
+                    }
+                    .onDelete { indexSet in
+                        confirmedRows.remove(atOffsets: indexSet)
+                    }
+                }
+
+                // 失败行
+                if !failed.isEmpty {
+                    Section(header: Text("未能解析（\(failed.count) 行）").foregroundColor(.red)) {
+                        ForEach(failed) { f in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(f.rawLine).font(.caption.monospaced()).lineLimit(2)
+                                Text(f.reason).font(.caption2).foregroundColor(.red)
+                            }
+                        }
+                    }
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding(40)
-            .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .strokeBorder(Color.blue.opacity(0.4),
-                                  style: StrokeStyle(lineWidth: 2, dash: [8]))
-            )
+            .listStyle(.insetGrouped)
+            .navigationTitle("确认导入数据")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("确认入库（\(confirmedRows.count)条）") {
+                        handleConfirm()
+                    }
+                    .disabled(confirmedRows.isEmpty)
+                    .fontWeight(.bold)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", role: .cancel) { onCancel() }
+                }
+            }
         }
-        .buttonStyle(.plain)
+        // 去重冲突弹窗
+        .confirmationDialog(
+            conflictRow.map { "发现重复：\($0.name)（\($0.phone ?? "")）" } ?? "重复数据",
+            isPresented: $showConflict,
+            titleVisibility: .visible
+        ) {
+            Button("覆盖原记录", role: .destructive) { resolveConflict(.overwrite) }
+            Button("追加转化记录（合并）")              { resolveConflict(.merge)     }
+            Button("跳过此条",  role: .cancel)        { resolveConflict(.skip)      }
+        } message: {
+            Text("该电话号码在数据库中已存在，请选择处理方式。")
+        }
+    }
+
+    // MARK: 确认时逐条检查冲突
+    private func handleConfirm() {
+        let conflicting = confirmedRows.filter { row in
+            guard let phone = row.phone else { return false }
+            return store.findExisting(phone: phone) != nil
+        }
+        if conflicting.isEmpty {
+            onConfirm(confirmedRows)
+        } else {
+            pendingQueue  = conflicting
+            processedRows = confirmedRows.filter { row in
+                guard let phone = row.phone else { return true }
+                return store.findExisting(phone: phone) == nil
+            }
+            showNextConflict()
+        }
+    }
+
+    private func showNextConflict() {
+        guard !pendingQueue.isEmpty else {
+            onConfirm(processedRows)
+            return
+        }
+        conflictRow = pendingQueue.removeFirst()
+        showConflict = true
+    }
+
+    private func resolveConflict(_ resolution: DuplicateResolution) {
+        guard let row = conflictRow, let phone = row.phone else {
+            showNextConflict(); return
+        }
+        switch resolution {
+        case .skip: break
+        case .overwrite, .merge:
+            if var existing = store.findExisting(phone: phone) {
+                if resolution == .overwrite {
+                    var newCustomer  = existing
+                    newCustomer.name    = row.name
+                    newCustomer.address = row.address ?? existing.address
+                    newCustomer.age     = row.age     ?? existing.age
+                    newCustomer.height  = row.height  ?? existing.height
+                    newCustomer.weight  = row.weight  ?? existing.weight
+                    store.updateCustomer(newCustomer)
+                } else {
+                    let record = ConversionRecord(
+                        type:        row.conversionType,
+                        amount:      row.amount ?? 0,
+                        productNote: row.productNote
+                    )
+                    existing.conversions.append(record)
+                    store.updateCustomer(existing)
+                }
+            }
+        }
+        conflictRow = nil
+        showNextConflict()
     }
 }
 
-// MARK: - 导入日志视图
-struct ImportLogView: View {
-    let events: [ImportEvent]
+// MARK: - 单行预览卡片（可编辑）
+struct ParsedRowCell: View {
+    @Binding var row: ParsedRow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("导入日志").font(.headline).padding(.horizontal)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(events.enumerated()), id: \.offset) { _, event in
-                        Text(eventDescription(event))
-                            .font(.caption.monospaced())
-                            .foregroundColor(eventColor(event))
-                            .padding(.horizontal)
-                    }
+            HStack {
+                // 类型标签
+                Text(row.dataType == .fullCustomer ? "新客户" : "流水")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(row.dataType == .fullCustomer
+                                ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15))
+                    .foregroundColor(row.dataType == .fullCustomer ? .blue : .orange)
+                    .cornerRadius(4)
+
+                Text(row.name).fontWeight(.semibold)
+                Spacer()
+                if let amt = row.amount {
+                    Text("¥\(Int(amt))").fontWeight(.bold).foregroundColor(.green)
                 }
             }
-            .frame(maxHeight: 180)
-        }
-        .padding(.vertical)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal)
-    }
 
-    private func eventDescription(_ e: ImportEvent) -> String {
-        switch e {
-        case .started(let f):                   return "▶ 开始导入：\(f)"
-        case .rowParsed(let i, _):              return "  ✓ 第 \(i) 行已解析"
-        case .needsReview(let i, _):            return "⚠ 第 \(i) 行需要手动补录"
-        case .duplicateFound(let i, let ex, _): return "⚠ 第 \(i) 行电话重复（现有：\(ex.name)）"
-        case .completed(let imp, let sk):       return "✅ 完成：导入 \(imp) 条，跳过 \(sk) 条"
-        case .failed(let err):                  return "❌ 失败：\(err.localizedDescription)"
-        }
-    }
-
-    private func eventColor(_ e: ImportEvent) -> Color {
-        switch e {
-        case .completed:                     return .green
-        case .failed:                        return .red
-        case .needsReview, .duplicateFound:  return .orange
-        default:                             return .secondary
-        }
-    }
-}
-
-// MARK: - 手动补录弹窗
-struct ManualReviewSheet: View {
-
-    let partial:   RowParseResult
-    let onConfirm: (RowParseResult) -> Void
-    let onSkip:    () -> Void
-
-    @State private var ageText:    String
-    @State private var heightText: String
-    @State private var weightText: String
-
-    init(partial: RowParseResult,
-         onConfirm: @escaping (RowParseResult) -> Void,
-         onSkip:    @escaping () -> Void) {
-        self.partial   = partial
-        self.onConfirm = onConfirm
-        self.onSkip    = onSkip
-        _ageText    = State(initialValue: partial.age.map    { "\($0)" } ?? "")
-        _heightText = State(initialValue: partial.height.map { "\($0)" } ?? "")
-        _weightText = State(initialValue: partial.weight.map { "\($0)" } ?? "")
-    }
-
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("已识别字段")) {
-                    InfoRow(label: "姓名", value: partial.name    ?? "—")
-                    InfoRow(label: "电话", value: partial.phone   ?? "—")
-                    InfoRow(label: "地址", value: partial.address ?? "—")
-                }
-                Section(header: Text("需要补录的字段")) {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
-                        Text("以下字段未能自动识别，请手动补录")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                    if partial.age == nil {
-                        TextField("年龄（1-120）", text: $ageText).keyboardType(.numberPad)
-                    }
-                    if partial.height == nil {
-                        TextField("身高 cm（100-220）", text: $heightText).keyboardType(.decimalPad)
-                    }
-                    if partial.weight == nil {
-                        TextField("体重 kg（30-150）", text: $weightText).keyboardType(.decimalPad)
-                    }
-                }
+            if let phone = row.phone {
+                Text(phone).font(.caption).foregroundColor(.secondary)
             }
-            .navigationTitle("数据修正")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("确认") { submit() } }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("跳过此行", role: .destructive) { onSkip() }
-                }
+            if let addr = row.address {
+                Text(addr).font(.caption2).foregroundColor(.secondary).lineLimit(1)
+            }
+
+            HStack(spacing: 12) {
+                Text(row.conversionType.rawValue)
+                    .font(.caption)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(4)
+
+                if let age = row.age    { Text("\(age)岁").font(.caption2).foregroundColor(.secondary) }
+                if let h   = row.height { Text("\(Int(h))cm").font(.caption2).foregroundColor(.secondary) }
+                if let w   = row.weight { Text("\(Int(w))kg").font(.caption2).foregroundColor(.secondary) }
+                if let p   = row.productNote { Text(p).font(.caption2).foregroundColor(.secondary).lineLimit(1) }
             }
         }
-    }
-
-    private func submit() {
-        var updated = partial
-        if let v = Int(ageText),       v >= 1   && v <= 120 { updated.age    = v }
-        if let v = Double(heightText), v >= 100 && v <= 220 { updated.height = v }
-        if let v = Double(weightText), v >= 30  && v <= 150 { updated.weight = v }
-        onConfirm(updated)
+        .padding(.vertical, 4)
     }
 }

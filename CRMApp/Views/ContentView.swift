@@ -35,10 +35,10 @@ struct MainTabView: View {
                 .tabItem { Label("客户", systemImage: "person.3.fill") }
 
             ImportView()
-                .tabItem { Label("导入", systemImage: "square.and.arrow.down.fill") }
+                .tabItem { Label("智能导入", systemImage: "doc.text.magnifyingglass") }
 
             TextInputView()
-                .tabItem { Label("录入", systemImage: "pencil.and.list.clipboard") }
+                .tabItem { Label("流水录入", systemImage: "pencil.and.list.clipboard") }
 
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape.fill") }
