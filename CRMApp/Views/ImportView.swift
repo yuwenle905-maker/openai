@@ -7,8 +7,15 @@ import UniformTypeIdentifiers
 struct ImportView: View {
 
     @EnvironmentObject var store: DataStore
-    @StateObject private var engine = ImportEngine(store: DataStore())
+    // 修复：使用 @EnvironmentObject 注入的全局 store，而非创建孤立副本
+    @StateObject private var engine: ImportEngine
+
     @State private var showingFilePicker = false
+
+    init() {
+        // engine 在 onAppear 中用真实 store 重新初始化，此处占位
+        _engine = StateObject(wrappedValue: ImportEngine(store: DataStore()))
+    }
 
     var body: some View {
         NavigationView {
@@ -22,13 +29,16 @@ struct ImportView: View {
                 Spacer()
             }
             .navigationTitle("导入数据")
+            // 修复 Bug 1：移除 .spreadsheet（iOS 不识别），改用 public.data 兜底
+            // allowsMultipleSelection: false → 回调类型为 Result<[URL], Error>
             .fileImporter(
                 isPresented: $showingFilePicker,
                 allowedContentTypes: [
-                    .spreadsheet,
                     UTType(filenameExtension: "xlsx") ?? .data,
                     UTType(filenameExtension: "xls")  ?? .data,
-                    .commaSeparatedText
+                    UTType(filenameExtension: "csv")  ?? .data,
+                    .commaSeparatedText,
+                    .data                               // 兜底：允许所有文件被选中
                 ],
                 allowsMultipleSelection: false
             ) { result in
@@ -57,12 +67,17 @@ struct ImportView: View {
                 }
             }
         }
+        // 修复：engine 绑定到真实的全局 store
+        .onAppear {
+            engine.rebind(store: store)
+        }
     }
 
     private func handleFilePick(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result, let url = urls.first else { return }
         guard url.startAccessingSecurityScopedResource() else { return }
         defer { url.stopAccessingSecurityScopedResource() }
+        // 真实场景：此处解析 xlsx/csv；当前用 mock 数据演示流程
         let mockRows = mockRawRows(from: url)
         engine.startImport(rows: mockRows, fileName: url.lastPathComponent, hasHeaders: true)
     }
@@ -86,7 +101,7 @@ struct DropZoneView: View {
             VStack(spacing: 16) {
                 Image(systemName: "arrow.down.doc.fill")
                     .font(.system(size: 48))
-                    .foregroundColor(.blue)     // iOS 15：不用 .foregroundStyle + .gradient
+                    .foregroundColor(.blue)
                 Text("点击选择文件")
                     .font(.headline)
                 Text("支持 .xlsx / .xls / .csv")
@@ -132,26 +147,26 @@ struct ImportLogView: View {
 
     private func eventDescription(_ e: ImportEvent) -> String {
         switch e {
-        case .started(let f):                  return "▶ 开始导入：\(f)"
-        case .rowParsed(let i, _):             return "  ✓ 第 \(i) 行已解析"
-        case .needsReview(let i, _):           return "⚠ 第 \(i) 行需要手动补录"
+        case .started(let f):                   return "▶ 开始导入：\(f)"
+        case .rowParsed(let i, _):              return "  ✓ 第 \(i) 行已解析"
+        case .needsReview(let i, _):            return "⚠ 第 \(i) 行需要手动补录"
         case .duplicateFound(let i, let ex, _): return "⚠ 第 \(i) 行电话重复（现有：\(ex.name)）"
-        case .completed(let imp, let sk):      return "✅ 完成：导入 \(imp) 条，跳过 \(sk) 条"
-        case .failed(let err):                 return "❌ 失败：\(err.localizedDescription)"
+        case .completed(let imp, let sk):       return "✅ 完成：导入 \(imp) 条，跳过 \(sk) 条"
+        case .failed(let err):                  return "❌ 失败：\(err.localizedDescription)"
         }
     }
 
     private func eventColor(_ e: ImportEvent) -> Color {
         switch e {
-        case .completed:                      return .green
-        case .failed:                         return .red
-        case .needsReview, .duplicateFound:   return .orange
-        default:                              return .secondary
+        case .completed:                     return .green
+        case .failed:                        return .red
+        case .needsReview, .duplicateFound:  return .orange
+        default:                             return .secondary
         }
     }
 }
 
-// MARK: - 手动补录弹窗（iOS 15 兼容：LabeledContent → InfoRow）
+// MARK: - 手动补录弹窗
 struct ManualReviewSheet: View {
 
     let partial:   RowParseResult
@@ -181,35 +196,27 @@ struct ManualReviewSheet: View {
                     InfoRow(label: "电话", value: partial.phone   ?? "—")
                     InfoRow(label: "地址", value: partial.address ?? "—")
                 }
-
                 Section(header: Text("需要补录的字段")) {
                     HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                         Text("以下字段未能自动识别，请手动补录")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.caption).foregroundColor(.secondary)
                     }
                     if partial.age == nil {
-                        TextField("年龄（1-120）", text: $ageText)
-                            .keyboardType(.numberPad)
+                        TextField("年龄（1-120）", text: $ageText).keyboardType(.numberPad)
                     }
                     if partial.height == nil {
-                        TextField("身高 cm（100-220）", text: $heightText)
-                            .keyboardType(.decimalPad)
+                        TextField("身高 cm（100-220）", text: $heightText).keyboardType(.decimalPad)
                     }
                     if partial.weight == nil {
-                        TextField("体重 kg（30-150）", text: $weightText)
-                            .keyboardType(.decimalPad)
+                        TextField("体重 kg（30-150）", text: $weightText).keyboardType(.decimalPad)
                     }
                 }
             }
             .navigationTitle("数据修正")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("确认") { submit() }
-                }
+                ToolbarItem(placement: .confirmationAction) { Button("确认") { submit() } }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("跳过此行", role: .destructive) { onSkip() }
                 }

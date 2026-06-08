@@ -29,18 +29,23 @@ struct TextParseError: Identifiable {
 // MARK: 解析器
 enum TextParser {
 
-    // 核心正则：^([^\s]+)\s+([^\s]+)\s+(\d+(?:\.\d+)?)$
+    // 修复 Bug 3：用 \s+ 同时兼容多个空格、Tab，并在预处理中覆盖全角空格
+    // 格式：姓名<分隔符>状态<分隔符>金额，分隔符可为任意空白
     private static let linePattern = try! NSRegularExpression(
-        pattern: #"^([^\s]+)\s+([^\s]+)\s+(\d+(?:\.\d+)?)$"#
+        pattern: #"^(\S+)\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$"#
     )
 
     // MARK: 批量解析多行文本
     /// 返回 (成功结果列表, 解析失败行列表)
     static func parse(_ text: String) -> (results: [TextParseResult], errors: [TextParseError]) {
-        // 预处理：全角空格(U+3000) 和不间断空格(U+00A0) 统一替换为半角空格
+        // 预处理：统一各种空白/分隔符为半角空格
         let normalized = text
-            .replacingOccurrences(of: "\u{3000}", with: " ")
-            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\u{3000}", with: " ")   // 全角空格
+            .replacingOccurrences(of: "\u{00A0}", with: " ")   // 不间断空格
+            .replacingOccurrences(of: "\u{2003}", with: " ")   // Em Space
+            .replacingOccurrences(of: "\t",       with: " ")   // Tab
+            .replacingOccurrences(of: "，",        with: " ")   // 中文逗号
+            .replacingOccurrences(of: "、",        with: " ")   // 顿号
         let lines = normalized
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }

@@ -9,7 +9,6 @@ struct SettingsView: View {
     @EnvironmentObject var lockManager: LockManager
 
     @State private var priceText:       String = ""
-    @FocusState private var priceFocused: Bool
 
     @State private var showPINSetup    = false
     @State private var showBackupSheet = false
@@ -24,6 +23,7 @@ struct SettingsView: View {
             Form {
 
                 // ── 数据单价 ───────────────────────────────────
+                // 修复 Bug 4：@FocusState onChange 在 iOS 15 不稳定，改为明确的"确认"按钮
                 Section {
                     HStack {
                         Text("数据单价")
@@ -31,21 +31,26 @@ struct SettingsView: View {
                         TextField("元/条", text: $priceText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
-                            .focused($priceFocused)
-                            .frame(width: 100)
+                            .frame(width: 90)
                             .onAppear { priceText = "\(Int(store.settings.leadUnitPrice))" }
-                            .onChange(of: priceFocused) { focused in
-                                if !focused, let value = Double(priceText), value > 0 {
-                                    store.settings.leadUnitPrice = value
-                                    store.save()
-                                }
-                            }
                         Text("元/条").foregroundColor(.secondary)
+                        Button("确认") {
+                            if let value = Double(priceText), value > 0 {
+                                store.settings.leadUnitPrice = value
+                                store.save()
+                            }
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil, from: nil, for: nil
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.blue)
                     }
                 } header: {
                     Text("ROI 计算参数")
                 } footer: {
-                    Text("本月成本 = 导入总条数 × 数据单价").font(.caption)
+                    Text("修改后点击「确认」立即生效。本月成本 = 导入总条数 × 数据单价").font(.caption)
                 }
 
                 // ── 安全锁（自由开关）─────────────────────────

@@ -1,44 +1,55 @@
 // MARK: - TextInputView.swift
-// 手动文本批量录入界面
+// 手动文本批量录入界面（iOS 15 兼容）
 
 import SwiftUI
 
 struct TextInputView: View {
 
     @EnvironmentObject var store: DataStore
-    @State private var inputText:  String = ""
-    @State private var parseResults:  [TextParseResult]  = []
-    @State private var parseErrors:   [TextParseError]   = []
-    @State private var showPreview:   Bool = false
-    @State private var savedCount:    Int  = 0
+    @State private var inputText:    String = ""
+    @State private var parseResults: [TextParseResult] = []
+    @State private var parseErrors:  [TextParseError]  = []
+    @State private var showPreview:  Bool = false
+    @State private var savedCount:   Int  = 0
     @State private var showSaveToast: Bool = false
+    // 修复 Bug 3：收起键盘
+    @FocusState private var editorFocused: Bool
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
+            // 修复 Bug 3：点击背景收起键盘
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
 
-                // ── 输入框 ─────────────────────────────────────
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("批量粘贴文本")
-                        .font(.headline)
-                        .padding(.horizontal)
-                        .padding(.top)
+                    // ── 说明 ──────────────────────────────────────
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("批量粘贴文本")
+                            .font(.headline)
+                        Text("每行格式：姓名 状态 金额")
+                            .font(.caption).foregroundColor(.secondary)
+                        Text("例：张三 新单 4280")
+                            .font(.caption).foregroundColor(.secondary)
+                        Text("支持全角/半角空格，状态可写新单/二次/三次")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top)
 
-                    Text("每行格式：姓名 状态 金额　例：张三 新单 4280")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal)
-
+                    // ── 输入框 ───────────────────────────────────
                     TextEditor(text: $inputText)
+                        .focused($editorFocused)
                         .font(.body.monospaced())
-                        .frame(minHeight: 160)
+                        .frame(minHeight: 160, maxHeight: 240)
                         .padding(8)
                         .background(Color(.secondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .cornerRadius(12)
                         .padding(.horizontal)
 
-                    HStack {
+                    // ── 操作按钮行 ───────────────────────────────
+                    HStack(spacing: 12) {
+                        // 修复 Bug 3：点击解析同时收起键盘
                         Button("解析预览") {
+                            editorFocused = false
                             let r = TextParser.parse(inputText)
                             parseResults = r.results
                             parseErrors  = r.errors
@@ -47,91 +58,121 @@ struct TextInputView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
+                        Button("收起键盘") {
+                            editorFocused = false
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.secondary)
+
                         Button("清空") {
+                            editorFocused = false
                             inputText    = ""
                             parseResults = []
                             parseErrors  = []
                             showPreview  = false
                         }
                         .buttonStyle(.bordered)
+                        .tint(.red)
                     }
                     .padding(.horizontal)
-                    .padding(.bottom)
-                }
-                .background(Color(.systemGroupedBackground))
 
-                // ── 预览 + 存储 ────────────────────────────────
-                if showPreview {
-                    List {
-                        // 成功解析
+                    // ── 解析结果预览 ─────────────────────────────
+                    if showPreview {
+
+                        // 成功列表
                         if !parseResults.isEmpty {
-                            Section("解析成功 (\(parseResults.count) 条)") {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text("解析成功 (\(parseResults.count) 条)")
+                                    .font(.caption).foregroundColor(.secondary)
+                                    .padding(.horizontal).padding(.top, 8)
+
+                                Divider()
+
                                 ForEach(parseResults) { r in
                                     HStack {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(r.name).fontWeight(.semibold)
                                             Text(r.rawLine)
                                                 .font(.caption.monospaced())
-                                                .foregroundStyle(.secondary)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
                                         }
                                         Spacer()
                                         VStack(alignment: .trailing, spacing: 2) {
                                             Text(r.conversionType.rawValue)
                                                 .font(.caption)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 2)
+                                                .padding(.horizontal, 8).padding(.vertical, 2)
                                                 .background(conversionColor(r.conversionType).opacity(0.15))
-                                                .foregroundStyle(conversionColor(r.conversionType))
+                                                .foregroundColor(conversionColor(r.conversionType))
                                                 .clipShape(Capsule())
                                             Text("¥\(Int(r.amount))")
-                                                .fontWeight(.semibold)
-                                                .foregroundStyle(.green)
+                                                .fontWeight(.semibold).foregroundColor(.green)
                                         }
                                     }
+                                    .padding(.horizontal).padding(.vertical, 8)
+                                    Divider()
                                 }
                             }
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                            .padding(.horizontal)
                         }
 
-                        // 解析失败
+                        // 失败列表
                         if !parseErrors.isEmpty {
-                            Section("解析失败 (\(parseErrors.count) 行)") {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text("解析失败 (\(parseErrors.count) 行)")
+                                    .font(.caption).foregroundColor(.red)
+                                    .padding(.horizontal).padding(.top, 8)
+                                Divider()
                                 ForEach(parseErrors) { e in
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("第 \(e.lineNumber) 行：\(e.rawLine)")
                                             .font(.caption.monospaced())
-                                        Text(e.reason)
-                                            .font(.caption2)
-                                            .foregroundStyle(.red)
+                                        Text(e.reason).font(.caption2).foregroundColor(.red)
                                     }
+                                    .padding(.horizontal).padding(.vertical, 6)
+                                    Divider()
                                 }
                             }
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                            .padding(.horizontal)
                         }
 
-                        // 保存按钮
+                        // 修复 Bug 3：保存按钮独立于 List，直接用 Button 不被拦截
                         if !parseResults.isEmpty {
-                            Section {
-                                Button {
-                                    saveConversions()
-                                } label: {
-                                    Label("保存 \(parseResults.count) 条转化记录", systemImage: "checkmark.circle.fill")
-                                        .frame(maxWidth: .infinity)
+                            Button {
+                                saveConversions()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "checkmark.circle.fill")
+                                    Text("保存 \(parseResults.count) 条转化记录")
+                                        .fontWeight(.semibold)
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(14)
                             }
+                            .padding(.horizontal)
                         }
                     }
-                    .listStyle(.insetGrouped)
-                }
 
-                Spacer()
+                    Spacer(minLength: 40)
+                }
             }
+            // 点空白收起键盘
+            .onTapGesture { editorFocused = false }
             .navigationTitle("手动录入")
+            .background(Color(.systemGroupedBackground))
             .overlay(alignment: .bottom) {
                 if showSaveToast {
-                    Text("✓ 已保存 \(savedCount) 条转化记录")
+                    Text("已保存 \(savedCount) 条转化记录")
                         .padding()
                         .background(Color.green)
-                        .foregroundStyle(.white)
+                        .foregroundColor(.white)
                         .clipShape(Capsule())
                         .padding(.bottom, 32)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -140,25 +181,19 @@ struct TextInputView: View {
         }
     }
 
-    // MARK: 保存转化记录到对应客户
+    // MARK: 保存
     private func saveConversions() {
         var saved = 0
         for result in parseResults {
-            let record = ConversionRecord(
-                type:   result.conversionType,
-                amount: result.amount,
-                date:   Date()
-            )
-            // 按姓名模糊匹配（实际生产中应配合电话）
+            let record = ConversionRecord(type: result.conversionType, amount: result.amount, date: Date())
             if let idx = store.customers.firstIndex(where: { $0.name == result.name }) {
                 store.customers[idx].conversions.append(record)
                 saved += 1
             } else {
-                // 姓名不存在 → 创建占位客户（电话暂存为姓名，待后续补全）
                 let newCustomer = Customer(
-                    name:       result.name,
-                    phone:      "待补全_\(result.name)",
-                    importDate: Date(),
+                    name:        result.name,
+                    phone:       "待补全_\(result.name)",
+                    importDate:  Date(),
                     conversions: [record]
                 )
                 store.customers.append(newCustomer)
@@ -166,15 +201,12 @@ struct TextInputView: View {
             }
         }
         store.save()
-        savedCount = saved
+        savedCount   = saved
         parseResults = []
         parseErrors  = []
         inputText    = ""
         showPreview  = false
-
-        withAnimation {
-            showSaveToast = true
-        }
+        withAnimation { showSaveToast = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             withAnimation { showSaveToast = false }
         }

@@ -45,6 +45,9 @@ class ImportEngine: ObservableObject {
 
     init(store: DataStore) { self.store = store }
 
+    // 允许 ImportView 在 onAppear 时绑定真实的全局 store
+    func rebind(store: DataStore) { self.store = store }
+
     // MARK: 主入口：从原始行列表开始导入
     func startImport(rows: [RawRow], fileName: String, hasHeaders: Bool) {
         isRunning = true
