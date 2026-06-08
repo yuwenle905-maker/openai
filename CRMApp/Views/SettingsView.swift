@@ -255,10 +255,10 @@ struct RestoreSheet: View {
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             }
-            // iOS 15：fileImporter 回调是 Result<[URL], Error>，需取 first
+            // iOS 15 单选：fileImporter 回调类型为 Result<URL, Error>，直接赋值
             .fileImporter(isPresented: $showPicker, allowedContentTypes: [.data]) { result in
-                if case .success(let urls) = result {
-                    selectedURL = urls.first
+                if case .success(let url) = result {
+                    selectedURL = url
                 }
             }
         }
