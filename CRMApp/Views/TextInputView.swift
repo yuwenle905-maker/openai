@@ -182,18 +182,27 @@ struct TextInputView: View {
     }
 
     // MARK: 保存
+    // ⚠️ 核心原则：只有通过「流水录入」页面手动输入的金额才计入营业额。
+    // 智能导入（含电话/地址/身高体重等完整线索）的金额存 leadAmount，不在此处处理。
     private func saveConversions() {
         var saved = 0
         for result in parseResults {
-            let record = ConversionRecord(type: result.conversionType, amount: result.amount, date: Date())
+            // 流水录入金额 → 写入 ConversionRecord.amount → 计入 totalRevenue/营业额
+            let record = ConversionRecord(
+                type:   result.conversionType,
+                amount: result.amount,          // 此处金额才计入营业额
+                date:   Date()
+            )
             if let idx = store.customers.firstIndex(where: { $0.name == result.name }) {
                 store.customers[idx].conversions.append(record)
                 saved += 1
             } else {
+                // 客户不存在时创建占位条目（无电话/地址，标记为 ledgerEntry 不计客户总数）
                 let newCustomer = Customer(
-                    name:        result.name,
-                    phone:       "待补全_\(result.name)",
-                    importDate:  Date(),
+                    name:       result.name,
+                    phone:      "待补全_\(result.name)_\(UUID().uuidString.prefix(6))",
+                    dataType:   .ledgerEntry,    // 缺电话和地址，不算完整客户
+                    importDate: Date(),
                     conversions: [record]
                 )
                 store.customers.append(newCustomer)

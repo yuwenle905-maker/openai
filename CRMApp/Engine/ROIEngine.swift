@@ -64,18 +64,24 @@ enum ROIEngine {
         )
     }
 
-    // MARK: 漏斗
+    // MARK: 漏斗（显示到五次）
     private static func buildFunnel(customers: [Customer], totalLeads: Int) -> [FunnelStage] {
         let types: [(ConversionType, String)] = [
-            (.newOrder, "新单"), (.second, "二次"), (.third, "三次"), (.fourth, "四次")
+            (.newOrder, "新单"),
+            (.second,   "二次"),
+            (.third,    "三次"),
+            (.fourth,   "四次"),
+            (.fifth,    "五次"),
         ]
-        var result:    [FunnelStage] = []
-        var prevCount  = totalLeads
+        var result:   [FunnelStage] = []
+        var prevCount = totalLeads
         for (type, label) in types {
             let matched = customers.filter { $0.conversions.contains { $0.type == type } }
             let count   = matched.count
-            let amount  = matched.flatMap { $0.conversions.filter { $0.type == type } }
-                                  .reduce(0) { $0 + $1.amount }
+            // 漏斗金额：只统计来自流水录入的 ConversionRecord.amount（不含 leadAmount）
+            let amount  = matched
+                .flatMap { $0.conversions.filter { $0.type == type } }
+                .reduce(0) { $0 + $1.amount }
             let rate: Double = prevCount > 0 ? Double(count) / Double(prevCount) : 0
             result.append(FunnelStage(label: label, count: count,
                                       totalAmount: amount, conversionRate: rate,
