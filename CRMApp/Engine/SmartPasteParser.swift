@@ -232,9 +232,12 @@ enum SmartPasteParser {
         let name = extractName(from: rest, removeKw: convKw)
         guard !name.isEmpty else { return nil }
 
-        // 判断类型：无电话 + 含流水关键词 → ledgerEntry
-        let isLedger = phone == nil && ledgerKeywords.contains(where: { raw.contains($0) })
-        let dataType: CustomerDataType = isLedger ? .ledgerEntry : .fullCustomer
+        // 判断类型：
+        //   fullCustomer  = 姓名 + 电话 + 地址 三项齐全 → 计入客户总数
+        //   ledgerEntry   = 无电话 + 含流水关键词，或缺少地址 → 不新增客户
+        let hasAllThree = phone != nil && address != nil
+        let isLedger    = !hasAllThree && ledgerKeywords.contains(where: { raw.contains($0) })
+        let dataType: CustomerDataType = hasAllThree ? .fullCustomer : .ledgerEntry
 
         return ParsedRow(
             rawLine:        raw,
