@@ -164,9 +164,9 @@ struct ImportView: View {
             }
 
             // 完整客户：leadAmount 存入 Customer，不进 ConversionRecord
-            let phone = row.phone ?? "unknown_\(UUID().uuidString.prefix(8))"
+            let phone           = row.phone ?? "unknown_\(UUID().uuidString.prefix(8))"
+            let currentLineCost = store.settings.leadUnitPrice  // 固化当前单价
             if let idx = store.customers.firstIndex(where: { $0.phone == phone }) {
-                // 已存在：更新 leadAmount（若新值更新）
                 if let newAmt = row.leadAmount {
                     store.customers[idx].leadAmount = newAmt
                     store.save()
@@ -179,11 +179,11 @@ struct ImportView: View {
                     age:           row.age,
                     height:        row.height,
                     weight:        row.weight,
-                    leadAmount:    row.leadAmount,   // 线索金额，不计营业额
+                    leadAmount:    row.leadAmount,
+                    lineCost:      currentLineCost,  // 历史单价固化，后续改价不影响此值
                     dataType:      .fullCustomer,
                     importBatchID: batchID,
                     importDate:    Date()
-                    // conversions 为空，等手动录入转化后再写入
                 )
                 store.addCustomer(customer)
                 batchFull += 1

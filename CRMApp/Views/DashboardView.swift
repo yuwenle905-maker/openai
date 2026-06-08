@@ -41,7 +41,7 @@ struct DashboardView: View {
                                 color: yearSummary.roi >= 1 ? .green : .orange)
                         KPICard(title: "本月成本",
                                 value: "¥\(Int(monthSummary.totalCost))",
-                                subtitle: "\(monthSummary.importedLeadCount) 条 × ¥\(Int(store.settings.leadUnitPrice))",
+                                subtitle: "\(monthSummary.importedLeadCount) 条（各自历史单价）",
                                 color: .blue)
                         KPICard(title: "本月营业额",
                                 value: "¥\(Int(monthSummary.totalRevenue))",

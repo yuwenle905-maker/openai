@@ -8,15 +8,15 @@ struct SettingsView: View {
     @EnvironmentObject var store:       DataStore
     @EnvironmentObject var lockManager: LockManager
 
-    @State private var priceText:       String = ""
-
-    @State private var showPINSetup    = false
-    @State private var showBackupSheet = false
-    @State private var showRestoreSheet = false
-    @State private var backupData:     Data?
-    @State private var showShareSheet  = false
-    @State private var alertMessage:   String = ""
-    @State private var showAlert       = false
+    @State private var priceText:        String = ""
+    @State private var showPINSetup      = false
+    @State private var showBackupSheet   = false
+    @State private var showRestoreSheet  = false
+    @State private var backupData:       Data?
+    @State private var showShareSheet    = false
+    @State private var alertMessage:     String = ""
+    @State private var showAlert         = false
+    @State private var showClearConfirm  = false   // 清空确认弹窗
 
     var body: some View {
         NavigationView {
@@ -114,6 +114,27 @@ struct SettingsView: View {
                     Text("备份文件使用 AES-256-GCM 加密，需凭密码才能解密恢复。").font(.caption)
                 }
 
+                // ── 危险操作：一键清空历史数据 ──────────────────
+                Section {
+                    Button {
+                        showClearConfirm = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Label("一键清空历史数据", systemImage: "trash.fill")
+                                .foregroundColor(.red)
+                            Spacer()
+                        }
+                    }
+                } header: {
+                    Text("危险操作")
+                } footer: {
+                    Text("仅清空 App 内的客户与批次数据，不删除本地备份文件，随时可通过备份恢复。")
+                        .font(.caption)
+                }
+
+                // ── 数据统计 ───────────────────────────────────
+
                 // ── 数据统计（iOS 15 兼容：InfoRow 代替 LabeledContent）
                 Section(header: Text("概览")) {
                     InfoRow(label: "客户总数",  value: "\(store.customers.count) 人")
@@ -122,6 +143,24 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            // ── 清空历史数据：二次确认弹窗 ──────────────────────
+            .confirmationDialog(
+                "确认清空所有历史数据？",
+                isPresented: $showClearConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("确认清空", role: .destructive) {
+                    // 只清空内存和 JSON 数据文件，不删除备份
+                    store.customers = []
+                    store.batches   = []
+                    store.save()
+                    alertMessage = "已清空所有客户和批次数据。备份文件保持完好，可随时恢复。"
+                    showAlert    = true
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此操作将删除 App 内所有客户记录和导入批次，但不会删除你通过「加密备份」生成的备份文件。确认后无法撤销。")
+            }
             .sheet(isPresented: $showPINSetup) {
                 PINSetupSheet(currentPIN: store.settings.appPIN) { pin in
                     store.settings.appPIN        = pin

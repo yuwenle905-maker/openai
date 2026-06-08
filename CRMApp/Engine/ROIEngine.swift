@@ -22,8 +22,9 @@ struct FunnelStage: Identifiable {
 // MARK: 期间汇总
 struct PeriodSummary {
     let importedLeadCount: Int
-    let leadUnitPrice: Double
-    var totalCost: Double { Double(importedLeadCount) * leadUnitPrice }
+
+    // 需求2：总成本 = 各客户入库时的单价之和（历史单价留存，不受后续改价影响）
+    let totalCost: Double
 
     // 营业额 = 手动录入转化记录之和（不含 leadAmount）
     let totalRevenue: Double
@@ -55,10 +56,12 @@ enum ROIEngine {
         let leadCount    = customers.count
         // 营业额：只统计手动录入的 ConversionRecord.amount
         let totalRevenue = customers.flatMap { $0.conversions }.reduce(0) { $0 + $1.amount }
+        // 成本：累加每个客户入库时固化的 lineCost（历史单价留存，不受后续改价影响）
+        let totalCost    = customers.reduce(0) { $0 + $1.lineCost }
         let stages       = buildFunnel(customers: customers, totalLeads: leadCount)
         return PeriodSummary(
             importedLeadCount: leadCount,
-            leadUnitPrice:     leadUnitPrice,
+            totalCost:         totalCost,
             totalRevenue:      totalRevenue,
             funnelStages:      stages
         )

@@ -33,7 +33,7 @@ enum DuplicateResolution {
 struct ConversionRecord: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var type: ConversionType
-    var amount: Double         // 手动录入的成交金额（计入营业额）
+    var amount: Double       // 手动录入的成交金额（计入营业额）
     var date: Date
     var productNote: String?
     var note: String?
@@ -62,8 +62,12 @@ struct Customer: Identifiable, Codable, Equatable {
     var height: Double?
     var weight: Double?
 
-    // 需求2：线索金额（智能导入时提取，仅用于画像统计，不计入营业额）
+    // 线索金额（智能导入时提取，仅用于画像统计，不计入营业额）
     var leadAmount: Double?
+
+    // 历史单价留存（需求2）
+    // 入库时自动固化当时的 AppSettings.leadUnitPrice，之后改价不影响此值
+    var lineCost: Double
 
     // 来源
     var importBatchID: UUID?
@@ -96,11 +100,15 @@ struct Customer: Identifiable, Codable, Equatable {
     }
 
     init(name: String, phone: String,
-         address: String?  = nil, age: Int? = nil,
-         height: Double?   = nil, weight: Double? = nil,
+         address: String?    = nil,
+         age: Int?           = nil,
+         height: Double?     = nil,
+         weight: Double?     = nil,
          leadAmount: Double? = nil,
+         lineCost: Double    = 1200,   // 默认单价，入库时由调用方传入当前设置值
          dataType: CustomerDataType = .fullCustomer,
-         importBatchID: UUID? = nil, importDate: Date = Date(),
+         importBatchID: UUID? = nil,
+         importDate: Date    = Date(),
          conversions: [ConversionRecord] = []) {
         self.name          = name
         self.phone         = phone
@@ -109,6 +117,7 @@ struct Customer: Identifiable, Codable, Equatable {
         self.height        = height
         self.weight        = weight
         self.leadAmount    = leadAmount
+        self.lineCost      = lineCost
         self.dataType      = dataType
         self.importBatchID = importBatchID
         self.importDate    = importDate
