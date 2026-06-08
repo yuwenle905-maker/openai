@@ -34,25 +34,10 @@ jobs:
           xcodegen generate --spec project.yml
           echo "=== objectVersion ==="
           grep -m1 "objectVersion" CRMApp.xcodeproj/project.pbxproj
-          echo "=== Project structure ==="
-          find CRMApp.xcodeproj -type f | sort
+          echo "=== Schemes ==="
+          xcodebuild -project CRMApp.xcodeproj -list
 
-      # ── 5. Detect iOS SDK ─────────────────────────────────────────────────
-      - name: Detect iOS SDK
-        run: |
-          SDK=$(xcodebuild -showsdks 2>/dev/null | grep iphoneos | tail -1 | awk '{print $NF}')
-          if [ -z "$SDK" ]; then
-            SDK=$(ls -d /Applications/Xcode*.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS*.sdk 2>/dev/null | sort -V | tail -1)
-          fi
-          echo "Using SDK: $SDK"
-          echo "IOS_SDK=$SDK" >> "$GITHUB_ENV"
-          xcodebuild -showsdks
-
-      # ── 6. List schemes (diagnostic) ──────────────────────────────────────
-      - name: List schemes
-        run: xcodebuild -project CRMApp.xcodeproj -list
-
-      # ── 7. Build (unsigned, arm64 device slice) ───────────────────────────
+      # ── 5. Build (unsigned, generic iOS device, arm64) ────────────────────
       - name: Build app
         run: |
           set -o pipefail
@@ -60,6 +45,7 @@ jobs:
             -project CRMApp.xcodeproj \
             -scheme CRMApp \
             -configuration Release \
+            -destination 'generic/platform=iOS' \
             -sdk iphoneos \
             -arch arm64 \
             CODE_SIGN_IDENTITY="" \
@@ -71,12 +57,12 @@ jobs:
             2>&1 | tee build.log; EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             echo ""
-            echo "========== LAST 100 LINES OF BUILD LOG =========="
-            tail -100 build.log
+            echo "========== LAST 150 LINES OF BUILD LOG =========="
+            tail -150 build.log
             exit $EXIT
           fi
 
-      # ── 8. Upload build log (always) ──────────────────────────────────────
+      # ── 6. Upload build log (always) ──────────────────────────────────────
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -85,19 +71,20 @@ jobs:
           path: build.log
           retention-days: 7
 
-      # ── 9. Verify .app was produced ───────────────────────────────────────
+      # ── 7. Verify .app was produced ───────────────────────────────────────
       - name: Verify build output
         run: |
           APP_PATH="${{ github.workspace }}/build/Release-iphoneos/CRMApp.app"
           if [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: CRMApp.app not found"
+            echo "ERROR: CRMApp.app not found at expected path"
+            echo "Contents of build dir:"
             ls -la "${{ github.workspace }}/build/Release-iphoneos/" || true
             exit 1
           fi
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "Found: $APP_PATH"
 
-      # ── 10. Package as TrollStore-compatible .ipa ─────────────────────────
+      # ── 8. Package as TrollStore-compatible .ipa ──────────────────────────
       - name: Package as TrollStore IPA
         run: |
           cd "${{ github.workspace }}/build/Release-iphoneos"
@@ -106,7 +93,7 @@ jobs:
           zip -r "${{ github.workspace }}/CRMApp.ipa" Payload
           echo "IPA size: $(du -sh "${{ github.workspace }}/CRMApp.ipa" | cut -f1)"
 
-      # ── 11. Upload IPA artifact ───────────────────────────────────────────
+      # ── 9. Upload IPA artifact ────────────────────────────────────────────
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:

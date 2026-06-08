@@ -8,7 +8,6 @@ options:
     iOS: "15.0"
   generateEmptyDirectories: true
   createIntermediateGroups: true
-  xcodeVersion: "15.0"
 
 settings:
   base:
@@ -16,17 +15,16 @@ settings:
     PRODUCT_NAME: CRMApp
     SWIFT_VERSION: "5.9"
     IPHONEOS_DEPLOYMENT_TARGET: "15.0"
-    TARGETED_DEVICE_FAMILY: "1"         # iPhone only
+    TARGETED_DEVICE_FAMILY: "1"
     ENABLE_BITCODE: NO
-    # TrollStore 免签：关闭所有代码签名
     CODE_SIGN_IDENTITY: ""
     CODE_SIGNING_REQUIRED: NO
     CODE_SIGNING_ALLOWED: NO
     AD_HOC_CODE_SIGNING_ALLOWED: YES
-    # 使用 arm64 真机切片，TrollStore 不需要模拟器
     ARCHS: arm64
     VALID_ARCHS: arm64
     EXCLUDED_ARCHS[sdk=iphonesimulator*]: arm64
+    SUPPORTS_MACCATALYST: NO
   configs:
     Debug:
       DEBUG_INFORMATION_FORMAT: dwarf
@@ -48,30 +46,32 @@ targets:
     info:
       path: CRMApp/Info.plist
       properties:
-        # 运行时由 Info.plist 提供，此处保持与文件同步
         CFBundleName: 私域CRM
         CFBundleDisplayName: 私域 CRM
         CFBundleIdentifier: com.yourname.PrivateCRM
         CFBundleVersion: "1"
         CFBundleShortVersionString: "1.0.0"
         NSFaceIDUsageDescription: 使用 Face ID 快速安全地解锁 CRM 数据
+        UILaunchScreen: {}
     settings:
       base:
         INFOPLIST_FILE: CRMApp/Info.plist
+        SDKROOT: iphoneos
     dependencies: []
-    # 不依赖 Flutter、Dart、CocoaPods 或任何第三方框架
-    # 仅使用系统框架：SwiftUI / Foundation / CryptoKit / LocalAuthentication
 
 schemes:
   CRMApp:
     build:
       targets:
         CRMApp: all
+      buildImplicitDependencies: true
     run:
       config: Debug
     test:
       config: Debug
-    archive:
+    profile:
       config: Release
     analyze:
+      config: Release
+    archive:
       config: Release
