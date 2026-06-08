@@ -281,7 +281,7 @@ struct ImportConfirmSheet: View {
                         handleConfirm()
                     }
                     .disabled(confirmedRows.isEmpty)
-                    .fontWeight(.bold)
+                    .font(.headline)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消", role: .cancel) { onCancel() }

@@ -170,10 +170,11 @@ class ImportEngine: ObservableObject {
     // MARK: 完成
     private func finalizeImport() {
         let batch = ImportBatch(
-            id: batchID,
-            fileName: "import_\(batchID.uuidString.prefix(8))",
-            importDate: Date(),
-            recordCount: importedCount
+            id:                batchID,
+            source:            "文件导入",
+            importDate:        Date(),
+            recordCount:       importedCount,
+            fullCustomerCount: importedCount
         )
         store.addBatch(batch)
         isRunning = false
