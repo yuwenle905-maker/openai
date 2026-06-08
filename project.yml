@@ -1,50 +1,77 @@
-name: PrivacyDiary
+# XcodeGen project spec — iOS 私域 CRM (TrollStore 免签版)
+# 生成命令: xcodegen generate --spec project.yml
+
+name: CRMApp
 options:
-  bundleIdPrefix: com.privacy
+  bundleIdPrefix: com.yourname
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "15.0"
   generateEmptyDirectories: true
   createIntermediateGroups: true
+  xcodeVersion: "15.0"
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: com.privacy.diary
-    PRODUCT_NAME: PrivacyDiary
+    PRODUCT_BUNDLE_IDENTIFIER: com.yourname.PrivateCRM
+    PRODUCT_NAME: CRMApp
     SWIFT_VERSION: "5.9"
-    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    TARGETED_DEVICE_FAMILY: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    TARGETED_DEVICE_FAMILY: "1"         # iPhone only
     ENABLE_BITCODE: NO
-    CODE_SIGN_IDENTITY: "-"
+    # TrollStore 免签：关闭所有代码签名
+    CODE_SIGN_IDENTITY: ""
     CODE_SIGNING_REQUIRED: NO
     CODE_SIGNING_ALLOWED: NO
+    AD_HOC_CODE_SIGNING_ALLOWED: YES
+    # 使用 arm64 真机切片，TrollStore 不需要模拟器
+    ARCHS: arm64
+    VALID_ARCHS: arm64
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: arm64
   configs:
     Debug:
       DEBUG_INFORMATION_FORMAT: dwarf
       SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
     Release:
       DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
       SWIFT_OPTIMIZATION_LEVEL: "-O"
 
 targets:
-  PrivacyDiary:
+  CRMApp:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "15.0"
     sources:
-      - path: PrivacyDiary
+      - path: CRMApp
         excludes:
           - Info.plist
     info:
-      path: PrivacyDiary/Info.plist
+      path: CRMApp/Info.plist
+      properties:
+        # 运行时由 Info.plist 提供，此处保持与文件同步
+        CFBundleName: 私域CRM
+        CFBundleDisplayName: 私域 CRM
+        CFBundleIdentifier: com.yourname.PrivateCRM
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0.0"
+        NSFaceIDUsageDescription: 使用 Face ID 快速安全地解锁 CRM 数据
     settings:
       base:
-        INFOPLIST_FILE: PrivacyDiary/Info.plist
+        INFOPLIST_FILE: CRMApp/Info.plist
     dependencies: []
+    # 不依赖 Flutter、Dart、CocoaPods 或任何第三方框架
+    # 仅使用系统框架：SwiftUI / Foundation / CryptoKit / LocalAuthentication
 
 schemes:
-  PrivacyDiary:
+  CRMApp:
     build:
       targets:
-        PrivacyDiary: all
+        CRMApp: all
+    run:
+      config: Debug
+    test:
+      config: Debug
     archive:
+      config: Release
+    analyze:
       config: Release

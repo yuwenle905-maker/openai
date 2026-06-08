@@ -91,6 +91,7 @@ class DataStore: ObservableObject {
                 customers[idx] = incoming
                 existing = incoming
             }
+            save()
             return true
 
         case .skip:
@@ -105,6 +106,7 @@ class DataStore: ObservableObject {
                 customers[idx].conversions.append(contentsOf: newConversions)
                 existing = customers[idx]
             }
+            save()
             return true
         }
     }

@@ -30,7 +30,10 @@ enum TextParser {
     // MARK: 批量解析多行文本
     /// 返回 (成功结果列表, 解析失败行列表)
     static func parse(_ text: String) -> (results: [TextParseResult], errors: [TextParseError]) {
-        let lines = text
+        // 将全角空格（微信复制常见）统一替换为半角空格，再按换行切分
+        let normalized = text.replacingOccurrences(of: "\u{3000}", with: " ")
+                             .replacingOccurrences(of: "\u{00A0}", with: " ")
+        let lines = normalized
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }

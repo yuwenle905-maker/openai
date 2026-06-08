@@ -66,28 +66,27 @@ enum FeatureDetector {
 
         // 3. 尝试提取数值
         if let value = extractNumericValue(from: s) {
-            // 年龄：整数 1-120
-            if value >= 1 && value <= 120 && value == Double(Int(value)) {
-                // 身高优先级高于年龄：100-120 区间歧义 → 看单位
-                if (s.contains("cm") || s.contains("厘米")) && value >= 100 {
-                    return .height(value)
-                }
-                if (s.contains("kg") || s.contains("公斤") || s.contains("斤")) {
-                    return .weight(value)
-                }
-                // 100-120：可能是身高也可能是年龄 → 按年龄处理（更保守）
-                if value >= 1 && value <= 99 {
-                    return .age(Int(value))
-                }
-            }
-            // 身高：100-220
-            if value >= 100 && value <= 220 {
-                return .height(value)
-            }
-            // 体重：30-150
-            if value >= 30 && value <= 150 {
-                return .weight(value)
-            }
+            let hasHeightUnit = s.contains("cm") || s.contains("厘米")
+            let hasWeightUnit = s.contains("kg") || s.contains("公斤") || s.contains("斤")
+            let hasAgeUnit    = s.contains("岁")
+            let isInteger     = value == Double(Int(value))
+
+            // 有明确单位时直接判定，不走区间歧义
+            if hasHeightUnit, value >= 100, value <= 220 { return .height(value) }
+            if hasWeightUnit, value >= 30,  value <= 150 { return .weight(value) }
+            if hasAgeUnit,    value >= 1,   value <= 120, isInteger { return .age(Int(value)) }
+
+            // 无单位时按区间互斥优先级判定：
+            //   1-29  → 仅年龄范围
+            //  30-99  → 年龄与体重重叠，优先年龄（整数）；非整数优先体重
+            // 100-120 → 年龄/身高/体重三重叠，优先身高（最常见量纲）
+            // 121-150 → 身高与体重重叠，优先身高
+            // 151-220 → 仅身高范围
+            if value >= 1   && value <= 29  && isInteger { return .age(Int(value)) }
+            if value >= 30  && value <= 99  && isInteger { return .age(Int(value)) }
+            if value >= 30  && value <= 99              { return .weight(value) }
+            if value >= 100 && value <= 220             { return .height(value) }
+            if value >= 30  && value <= 150             { return .weight(value) }
         }
 
         // 4. 兜底：视为姓名/文本
