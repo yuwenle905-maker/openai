@@ -109,8 +109,6 @@ enum ROIEngine {
         }
         return result
     }
-        return result
-    }
 
     // MARK: 七大地理区划（需求4）
     // filterKey 与 regionLabel(for:) 保持一致，供下钻使用
@@ -146,7 +144,7 @@ enum ROIEngine {
         }
 
         // 按七大区顺序 + 未知
-        var ordered: [String] = regionGroups.map { $0.label } + ["未知/其他"]
+        let ordered: [String] = regionGroups.map { $0.label } + ["未知/其他"]
         return ordered.compactMap { label -> ProfileItem? in
             guard let count = counts[label], count > 0 else { return nil }
             return ProfileItem(label: label, count: count,
