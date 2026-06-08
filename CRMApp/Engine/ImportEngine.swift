@@ -147,7 +147,7 @@ class ImportEngine: ObservableObject {
     // MARK: 用户选择去重策略后调用
     func resolveDuplicate(resolution: DuplicateResolution) {
         showingDuplicateSheet = false
-        guard var pair = pendingDuplicateRow else { processNextInQueue(); return }
+        guard let pair = pendingDuplicateRow else { processNextInQueue(); return }
         pendingDuplicateRow = nil
 
         var existing = pair.existing

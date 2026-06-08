@@ -3,8 +3,15 @@
 
 import Foundation
 
-// MARK: 单条解析结果
-struct TextParseResult {
+// MARK: 解析错误类型（满足 Error 协议）
+enum ParseError: Error {
+    case formatMismatch(String)
+    case invalidAmount(String)
+}
+
+// MARK: 单条解析结果（满足 Identifiable 供 ForEach 使用）
+struct TextParseResult: Identifiable {
+    let id = UUID()
     let rawLine: String
     let name: String
     let conversionType: ConversionType
@@ -30,9 +37,10 @@ enum TextParser {
     // MARK: 批量解析多行文本
     /// 返回 (成功结果列表, 解析失败行列表)
     static func parse(_ text: String) -> (results: [TextParseResult], errors: [TextParseError]) {
-        // 将全角空格（微信复制常见）统一替换为半角空格，再按换行切分
-        let normalized = text.replacingOccurrences(of: "\u{3000}", with: " ")
-                             .replacingOccurrences(of: "\u{00A0}", with: " ")
+        // 预处理：全角空格(U+3000) 和不间断空格(U+00A0) 统一替换为半角空格
+        let normalized = text
+            .replacingOccurrences(of: "\u{3000}", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
         let lines = normalized
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -46,19 +54,20 @@ enum TextParser {
             switch parseSingleLine(line) {
             case .success(let r):
                 results.append(r)
-            case .failure(let reason):
-                errors.append(TextParseError(
-                    lineNumber: lineNumber,
-                    rawLine: line,
-                    reason: reason
-                ))
+            case .failure(let err):
+                let reason: String
+                switch err {
+                case .formatMismatch(let msg):  reason = msg
+                case .invalidAmount(let msg):   reason = msg
+                }
+                errors.append(TextParseError(lineNumber: lineNumber, rawLine: line, reason: reason))
             }
         }
         return (results, errors)
     }
 
     // MARK: 解析单行
-    static func parseSingleLine(_ line: String) -> Result<TextParseResult, String> {
+    static func parseSingleLine(_ line: String) -> Result<TextParseResult, ParseError> {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         let range = NSRange(trimmed.startIndex..., in: trimmed)
 
@@ -67,25 +76,22 @@ enum TextParser {
               let typeRange   = Range(match.range(at: 2), in: trimmed),
               let amountRange = Range(match.range(at: 3), in: trimmed)
         else {
-            return .failure("格式不符：需要 "姓名 状态 金额"，例如 "张三 新单 4280"")
+            return .failure(.formatMismatch("格式不符：需要「姓名 状态 金额」，例如「张三 新单 4280」"))
         }
 
-        let name   = String(trimmed[nameRange])
-        let typeRaw = String(trimmed[typeRange])
+        let name      = String(trimmed[nameRange])
+        let typeRaw   = String(trimmed[typeRange])
         let amountStr = String(trimmed[amountRange])
 
         guard let amount = Double(amountStr), amount >= 0 else {
-            return .failure("金额解析失败：\(amountStr)")
+            return .failure(.invalidAmount("金额解析失败：\(amountStr)"))
         }
 
-        // 模糊匹配转化类型
-        let convType = mapConversionType(typeRaw)
-
         return .success(TextParseResult(
-            rawLine: line,
-            name: name,
-            conversionType: convType,
-            amount: amount
+            rawLine:        line,
+            name:           name,
+            conversionType: mapConversionType(typeRaw),
+            amount:         amount
         ))
     }
 

@@ -130,7 +130,7 @@ struct TextInputView: View {
                 if showSaveToast {
                     Text("✓ 已保存 \(savedCount) 条转化记录")
                         .padding()
-                        .background(.green.gradient)
+                        .background(Color.green)
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
                         .padding(.bottom, 32)
