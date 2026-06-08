@@ -1,5 +1,5 @@
 // MARK: - TextInputView.swift
-// 手动文本批量录入界面（iOS 15 兼容）
+// 手动流水录入界面（iOS 15 兼容）
 
 import SwiftUI
 
@@ -12,28 +12,28 @@ struct TextInputView: View {
     @State private var showPreview:  Bool = false
     @State private var savedCount:   Int  = 0
     @State private var showSaveToast: Bool = false
-    // 修复 Bug 3：收起键盘
+    @State private var toastMessage:  String = ""
     @FocusState private var editorFocused: Bool
 
     var body: some View {
         NavigationView {
-            // 修复 Bug 3：点击背景收起键盘
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
 
-                    // ── 说明 ──────────────────────────────────────
+                    // ── 说明卡片 ──────────────────────────────────
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("批量粘贴文本")
-                            .font(.headline)
-                        Text("每行格式：姓名 状态 金额")
+                        Text("流水录入").font(.headline)
+                        Text("格式：姓名 状态 金额（此处金额计入营业额）")
                             .font(.caption).foregroundColor(.secondary)
-                        Text("例：张三 新单 4280")
+                        Text("例：张三 新单 4280  /  张三 五次 168000")
                             .font(.caption).foregroundColor(.secondary)
-                        Text("支持全角/半角空格，状态可写新单/二次/三次")
-                            .font(.caption2).foregroundColor(.secondary)
+                        Text("⚠️ 姓名需与已导入的客户一致，否则仅记录为待关联流水")
+                            .font(.caption2).foregroundColor(.orange)
                     }
+                    .padding()
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .cornerRadius(12)
                     .padding(.horizontal)
-                    .padding(.top)
 
                     // ── 输入框 ───────────────────────────────────
                     TextEditor(text: $inputText)
@@ -45,9 +45,8 @@ struct TextInputView: View {
                         .cornerRadius(12)
                         .padding(.horizontal)
 
-                    // ── 操作按钮行 ───────────────────────────────
+                    // ── 操作按钮 ─────────────────────────────────
                     HStack(spacing: 12) {
-                        // 修复 Bug 3：点击解析同时收起键盘
                         Button("解析预览") {
                             editorFocused = false
                             let r = TextParser.parse(inputText)
@@ -58,47 +57,59 @@ struct TextInputView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                        Button("收起键盘") {
-                            editorFocused = false
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.secondary)
+                        Button("收起键盘") { editorFocused = false }
+                            .buttonStyle(.bordered).tint(.secondary)
 
                         Button("清空") {
                             editorFocused = false
-                            inputText    = ""
-                            parseResults = []
-                            parseErrors  = []
-                            showPreview  = false
+                            inputText = ""; parseResults = []; parseErrors = []; showPreview = false
                         }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
+                        .buttonStyle(.bordered).tint(.red)
                     }
                     .padding(.horizontal)
 
-                    // ── 解析结果预览 ─────────────────────────────
+                    // ── 解析预览区 ───────────────────────────────
                     if showPreview {
 
-                        // 成功列表
                         if !parseResults.isEmpty {
+                            // 预览时标记每条是否能关联到已有客户
                             VStack(alignment: .leading, spacing: 0) {
                                 Text("解析成功 (\(parseResults.count) 条)")
                                     .font(.caption).foregroundColor(.secondary)
                                     .padding(.horizontal).padding(.top, 8)
-
                                 Divider()
-
                                 ForEach(parseResults) { r in
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(r.name).fontWeight(.semibold)
+                                    let matched = store.customers.first {
+                                        $0.name == r.name && $0.dataType == .fullCustomer
+                                    }
+                                    HStack(alignment: .top, spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack(spacing: 6) {
+                                                Text(r.name).fontWeight(.semibold)
+                                                // 匹配状态标签
+                                                if matched != nil {
+                                                    Text("已匹配客户")
+                                                        .font(.caption2)
+                                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                                        .background(Color.green.opacity(0.15))
+                                                        .foregroundColor(.green)
+                                                        .cornerRadius(4)
+                                                } else {
+                                                    Text("未找到客户")
+                                                        .font(.caption2)
+                                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                                        .background(Color.orange.opacity(0.15))
+                                                        .foregroundColor(.orange)
+                                                        .cornerRadius(4)
+                                                }
+                                            }
                                             Text(r.rawLine)
                                                 .font(.caption.monospaced())
                                                 .foregroundColor(.secondary)
                                                 .lineLimit(1)
                                         }
                                         Spacer()
-                                        VStack(alignment: .trailing, spacing: 2) {
+                                        VStack(alignment: .trailing, spacing: 3) {
                                             Text(r.conversionType.rawValue)
                                                 .font(.caption)
                                                 .padding(.horizontal, 8).padding(.vertical, 2)
@@ -118,7 +129,6 @@ struct TextInputView: View {
                             .padding(.horizontal)
                         }
 
-                        // 失败列表
                         if !parseErrors.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
                                 Text("解析失败 (\(parseErrors.count) 行)")
@@ -140,11 +150,8 @@ struct TextInputView: View {
                             .padding(.horizontal)
                         }
 
-                        // 修复 Bug 3：保存按钮独立于 List，直接用 Button 不被拦截
                         if !parseResults.isEmpty {
-                            Button {
-                                saveConversions()
-                            } label: {
+                            Button { saveConversions() } label: {
                                 HStack {
                                     Image(systemName: "checkmark.circle.fill")
                                     Text("保存 \(parseResults.count) 条转化记录")
@@ -160,16 +167,54 @@ struct TextInputView: View {
                         }
                     }
 
+                    // ── 流水待关联列表（让用户看到"未找到客户"的记录）──
+                    let orphans = store.customers.filter {
+                        $0.dataType == .ledgerEntry && $0.phone.hasPrefix("待补全_")
+                    }
+                    if !orphans.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack {
+                                Text("待关联流水（\(orphans.count) 条）")
+                                    .font(.caption.bold()).foregroundColor(.orange)
+                                Spacer()
+                                Text("先导入完整客户后系统自动关联")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal).padding(.top, 8)
+                            Divider()
+                            ForEach(orphans) { c in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(c.name).fontWeight(.semibold)
+                                    ForEach(c.conversions) { rec in
+                                        HStack {
+                                            Text(rec.type.rawValue).font(.caption)
+                                                .foregroundColor(conversionColor(rec.type))
+                                            Spacer()
+                                            Text("¥\(Int(rec.amount))")
+                                                .font(.caption).foregroundColor(.green)
+                                            Text(rec.date.formatted(date: .abbreviated, time: .omitted))
+                                                .font(.caption2).foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal).padding(.vertical, 6)
+                                Divider()
+                            }
+                        }
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
+                    }
+
                     Spacer(minLength: 40)
                 }
             }
-            // 点空白收起键盘
             .onTapGesture { editorFocused = false }
-            .navigationTitle("手动录入")
+            .navigationTitle("流水录入")
             .background(Color(.systemGroupedBackground))
             .overlay(alignment: .bottom) {
                 if showSaveToast {
-                    Text("已保存 \(savedCount) 条转化记录")
+                    Text(toastMessage)
                         .padding()
                         .background(Color.green)
                         .foregroundColor(.white)
@@ -181,42 +226,58 @@ struct TextInputView: View {
         }
     }
 
-    // MARK: 保存
-    // ⚠️ 核心原则：只有通过「流水录入」页面手动输入的金额才计入营业额。
-    // 智能导入（含电话/地址/身高体重等完整线索）的金额存 leadAmount，不在此处处理。
+    // MARK: 保存流水记录
+    // 核心原则：只有此处写入的金额才计入营业额（ConversionRecord.amount）
     private func saveConversions() {
-        var saved = 0
+        var matched   = 0   // 成功关联到已有完整客户
+        var orphaned  = 0   // 未找到客户，暂存为待关联流水
+
         for result in parseResults {
-            // 流水录入金额 → 写入 ConversionRecord.amount → 计入 totalRevenue/营业额
             let record = ConversionRecord(
                 type:   result.conversionType,
-                amount: result.amount,          // 此处金额才计入营业额
+                amount: result.amount,   // 此处金额计入营业额
                 date:   Date()
             )
-            if let idx = store.customers.firstIndex(where: { $0.name == result.name }) {
+
+            // 优先按姓名精确匹配已有完整客户
+            if let idx = store.customers.firstIndex(where: {
+                $0.name == result.name && $0.dataType == .fullCustomer
+            }) {
                 store.customers[idx].conversions.append(record)
-                saved += 1
+                matched += 1
             } else {
-                // 客户不存在时创建占位条目（无电话/地址，标记为 ledgerEntry 不计客户总数）
-                let newCustomer = Customer(
-                    name:       result.name,
-                    phone:      "待补全_\(result.name)_\(UUID().uuidString.prefix(6))",
-                    dataType:   .ledgerEntry,    // 缺电话和地址，不算完整客户
-                    importDate: Date(),
+                // 未找到完整客户 → 创建待关联流水条目（ledgerEntry，不计入客户总数）
+                // 关联规则：下次导入同名完整客户时，可手动/自动合并
+                let orphan = Customer(
+                    name:        result.name,
+                    phone:       "待补全_\(result.name)_\(UUID().uuidString.prefix(6))",
+                    dataType:    .ledgerEntry,
+                    importDate:  Date(),
                     conversions: [record]
                 )
-                store.customers.append(newCustomer)
-                saved += 1
+                store.customers.append(orphan)
+                orphaned += 1
             }
         }
+
         store.save()
-        savedCount   = saved
+        savedCount   = matched + orphaned
         parseResults = []
         parseErrors  = []
         inputText    = ""
         showPreview  = false
+
+        // 根据关联情况给不同的提示
+        if orphaned == 0 {
+            toastMessage = "✅ 已关联 \(matched) 条转化记录到客户"
+        } else if matched == 0 {
+            toastMessage = "⚠️ \(orphaned) 条暂存为待关联流水（客户未找到）"
+        } else {
+            toastMessage = "✅ 关联 \(matched) 条，⚠️ \(orphaned) 条待关联"
+        }
+
         withAnimation { showSaveToast = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             withAnimation { showSaveToast = false }
         }
     }
@@ -229,8 +290,8 @@ struct TextInputView: View {
         case .fourth:   return .purple
         case .fifth:    return .red
         case .sixth:    return .indigo
-        case .seventh:  return .teal
-        case .eighth:   return .cyan
+        case .seventh:  return Color(red: 0, green: 0.5, blue: 0.5)
+        case .eighth:   return Color(red: 0, green: 0.7, blue: 0.9)
         case .unknown:  return .gray
         }
     }

@@ -10,17 +10,25 @@ struct DashboardView: View {
     @State private var selectedMonth: Int  = Calendar.current.component(.month, from: Date())
     @State private var funnelExpanded: Bool = true
 
+    // 完整客户（用于画像统计：地域/年龄/金额分布）
     private var monthCustomers: [Customer] {
         store.customers(inYear: selectedYear, month: selectedMonth)
     }
     private var yearCustomers: [Customer] {
         store.customers(inYear: selectedYear)
     }
+    // 所有客户包括流水条目（用于营业额/ROI/漏斗统计）
+    private var monthAllCustomers: [Customer] {
+        store.allCustomers(inYear: selectedYear, month: selectedMonth)
+    }
+    private var yearAllCustomers: [Customer] {
+        store.allCustomers(inYear: selectedYear)
+    }
     private var monthSummary: PeriodSummary {
-        ROIEngine.summary(customers: monthCustomers, leadUnitPrice: store.settings.leadUnitPrice)
+        ROIEngine.summary(customers: monthAllCustomers, leadUnitPrice: store.settings.leadUnitPrice)
     }
     private var yearSummary: PeriodSummary {
-        ROIEngine.summary(customers: yearCustomers, leadUnitPrice: store.settings.leadUnitPrice)
+        ROIEngine.summary(customers: yearAllCustomers, leadUnitPrice: store.settings.leadUnitPrice)
     }
 
     var body: some View {

@@ -122,7 +122,9 @@ class DataStore: ObservableObject {
         }
     }
 
-    // MARK: 月度/年度过滤（仅完整客户）
+    // MARK: 月度/年度过滤
+
+    /// 用于客户列表展示：仅完整客户
     func customers(inYear year: Int, month: Int) -> [Customer] {
         let cal = Calendar.current
         return customers.filter {
@@ -137,6 +139,23 @@ class DataStore: ObservableObject {
         return customers.filter {
             guard $0.dataType == .fullCustomer else { return false }
             return cal.component(.year, from: $0.importDate) == year
+        }
+    }
+
+    /// 用于营业额/ROI 统计：包含所有类型（fullCustomer + ledgerEntry）
+    /// 流水录入的转化记录也需要计入营业额
+    func allCustomers(inYear year: Int, month: Int) -> [Customer] {
+        let cal = Calendar.current
+        return customers.filter {
+            let comps = cal.dateComponents([.year, .month], from: $0.importDate)
+            return comps.year == year && comps.month == month
+        }
+    }
+
+    func allCustomers(inYear year: Int) -> [Customer] {
+        let cal = Calendar.current
+        return customers.filter {
+            cal.component(.year, from: $0.importDate) == year
         }
     }
 
