@@ -139,36 +139,36 @@ struct ImportView: View {
         }
     }
 
-    // MARK: 入库逻辑（带去重）
+    // MARK: 入库逻辑
     private func commitToStore(rows: [ParsedRow]) {
         var batchImported = 0
         var batchFull     = 0
         let batchID       = UUID()
 
         for row in rows {
-            let record = ConversionRecord(
-                type:        row.conversionType,
-                amount:      row.amount ?? 0,
-                date:        Date(),
-                productNote: row.productNote
-            )
-
-            // 流水记录：只追加转化，不新增客户
+            // 流水记录：只追加转化，不新增客户，不计入营业额
+            // 注意：流水金额也不写入 ConversionRecord.amount（因为尚未成交）
             if row.dataType == .ledgerEntry {
                 if let idx = store.customers.firstIndex(where: { $0.name == row.name }) {
+                    // 仅记录跟进事件，金额为 0（实际成交时再手动录入）
+                    let record = ConversionRecord(
+                        type:        row.conversionType,
+                        amount:      0,
+                        date:        Date(),
+                        productNote: row.productNote
+                    )
                     store.customers[idx].conversions.append(record)
                     store.save()
                 }
-                // 若客户不存在也不创建（流水记录语义）
                 continue
             }
 
-            // 完整客户：先检查去重
-            let phone = row.phone ?? "unknown_\(row.name)"
-            if let _ = store.findExisting(phone: phone) {
-                // 冲突：UI 层已在确认弹窗处理，此处走合并（默认策略）
-                if let idx = store.customers.firstIndex(where: { $0.phone == phone }) {
-                    store.customers[idx].conversions.append(record)
+            // 完整客户：leadAmount 存入 Customer，不进 ConversionRecord
+            let phone = row.phone ?? "unknown_\(UUID().uuidString.prefix(8))"
+            if let idx = store.customers.firstIndex(where: { $0.phone == phone }) {
+                // 已存在：更新 leadAmount（若新值更新）
+                if let newAmt = row.leadAmount {
+                    store.customers[idx].leadAmount = newAmt
                     store.save()
                 }
             } else {
@@ -179,10 +179,11 @@ struct ImportView: View {
                     age:           row.age,
                     height:        row.height,
                     weight:        row.weight,
+                    leadAmount:    row.leadAmount,   // 线索金额，不计营业额
                     dataType:      .fullCustomer,
                     importBatchID: batchID,
-                    importDate:    Date(),
-                    conversions:   [record]
+                    importDate:    Date()
+                    // conversions 为空，等手动录入转化后再写入
                 )
                 store.addCustomer(customer)
                 batchFull += 1
@@ -341,17 +342,14 @@ struct ImportConfirmSheet: View {
                     var newCustomer  = existing
                     newCustomer.name    = row.name
                     newCustomer.address = row.address ?? existing.address
-                    newCustomer.age     = row.age     ?? existing.age
-                    newCustomer.height  = row.height  ?? existing.height
-                    newCustomer.weight  = row.weight  ?? existing.weight
+                    newCustomer.age        = row.age        ?? existing.age
+                    newCustomer.height     = row.height     ?? existing.height
+                    newCustomer.weight     = row.weight     ?? existing.weight
+                    newCustomer.leadAmount = row.leadAmount ?? existing.leadAmount
                     store.updateCustomer(newCustomer)
                 } else {
-                    let record = ConversionRecord(
-                        type:        row.conversionType,
-                        amount:      row.amount ?? 0,
-                        productNote: row.productNote
-                    )
-                    existing.conversions.append(record)
+                    // merge：更新 leadAmount，不动 conversions
+                    existing.leadAmount = row.leadAmount ?? existing.leadAmount
                     store.updateCustomer(existing)
                 }
             }
@@ -379,7 +377,7 @@ struct ParsedRowCell: View {
 
                 Text(row.name).fontWeight(.semibold)
                 Spacer()
-                if let amt = row.amount {
+                if let amt = row.leadAmount {
                     Text("¥\(Int(amt))").fontWeight(.bold).foregroundColor(.green)
                 }
             }

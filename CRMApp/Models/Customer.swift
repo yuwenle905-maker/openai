@@ -5,8 +5,8 @@ import Foundation
 
 // MARK: 客户记录类型
 enum CustomerDataType: String, Codable {
-    case fullCustomer   // 完整客户：含姓名+电话+地址，计入客户总数
-    case ledgerEntry    // 流水/跟进记录：仅含姓名+转化类型+金额，不新增客户
+    case fullCustomer  // 完整客户：含姓名+电话+地址，计入客户总数
+    case ledgerEntry   // 流水/跟进记录：仅含姓名+转化类型+金额，不新增客户
 }
 
 // MARK: 转化状态
@@ -25,13 +25,13 @@ enum DuplicateResolution {
     case merge
 }
 
-// MARK: 转化/消费记录（生命周期时间轴节点）
+// MARK: 转化/消费记录（生命周期时间轴）
 struct ConversionRecord: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var type: ConversionType
-    var amount: Double
+    var amount: Double         // 手动录入的成交金额（计入营业额）
     var date: Date
-    var productNote: String?   // 商品备注，如"植物茶2+脂肪粉2"
+    var productNote: String?
     var note: String?
 
     init(type: ConversionType, amount: Double,
@@ -48,34 +48,36 @@ struct ConversionRecord: Identifiable, Codable, Equatable {
 struct Customer: Identifiable, Codable, Equatable {
 
     var id: UUID = UUID()
-
-    // 记录类型（决定是否计入客户总数）
     var dataType: CustomerDataType = .fullCustomer
 
     // 基础资料
     var name: String
-    var phone: String          // 唯一键；流水记录可为 "ledger_<name>"
+    var phone: String
     var address: String?
     var age: Int?
     var height: Double?
     var weight: Double?
 
+    // 需求2：线索金额（智能导入时提取，仅用于画像统计，不计入营业额）
+    var leadAmount: Double?
+
     // 来源
     var importBatchID: UUID?
-    var importDate: Date       // 精确到秒，用于按天归类
+    var importDate: Date
 
     // 标签
     var tags: [String] = []
 
-    // 转化/消费记录
+    // 转化/消费记录（手动录入，金额计入营业额）
     var conversions: [ConversionRecord] = []
 
     // MARK: 计算属性
+
+    /// 营业额 = 手动录入转化记录之和（不含 leadAmount）
     var totalRevenue: Double {
         conversions.reduce(0) { $0 + $1.amount }
     }
 
-    // 按天归类键（yyyy-MM-dd）
     var importDayKey: String {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
@@ -90,8 +92,9 @@ struct Customer: Identifiable, Codable, Equatable {
     }
 
     init(name: String, phone: String,
-         address: String? = nil, age: Int? = nil,
-         height: Double? = nil, weight: Double? = nil,
+         address: String?  = nil, age: Int? = nil,
+         height: Double?   = nil, weight: Double? = nil,
+         leadAmount: Double? = nil,
          dataType: CustomerDataType = .fullCustomer,
          importBatchID: UUID? = nil, importDate: Date = Date(),
          conversions: [ConversionRecord] = []) {
@@ -101,6 +104,7 @@ struct Customer: Identifiable, Codable, Equatable {
         self.age           = age
         self.height        = height
         self.weight        = weight
+        self.leadAmount    = leadAmount
         self.dataType      = dataType
         self.importBatchID = importBatchID
         self.importDate    = importDate
@@ -111,10 +115,10 @@ struct Customer: Identifiable, Codable, Equatable {
 // MARK: 导入批次
 struct ImportBatch: Identifiable, Codable {
     var id: UUID = UUID()
-    var source: String         // "智能粘贴" 或文件名
+    var source: String
     var importDate: Date
     var recordCount: Int
-    var fullCustomerCount: Int // 仅完整客户数
+    var fullCustomerCount: Int
 
     var displayHeader: String {
         let fmt = DateFormatter()
@@ -123,9 +127,7 @@ struct ImportBatch: Identifiable, Codable {
         return "\(fmt.string(from: importDate))  |  \(recordCount) 条"
     }
 
-    var yearKey: String {
-        "\(Calendar.current.component(.year, from: importDate))年"
-    }
+    var yearKey:  String { "\(Calendar.current.component(.year, from: importDate))年" }
     var monthKey: String {
         let c = Calendar.current.dateComponents([.year, .month], from: importDate)
         return "\(c.year!)年\(c.month!)月"

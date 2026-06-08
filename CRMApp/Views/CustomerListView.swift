@@ -407,6 +407,9 @@ struct CustomerDetailView: View {
             }
 
             Section(header: Text("汇总")) {
+                if let lead = customer.leadAmount {
+                    InfoRow(label: "线索金额", value: "¥\(Int(lead))（仅记录，不计营业额）")
+                }
                 InfoRow(label: "总营业额", value: "¥\(Int(customer.totalRevenue))")
                 InfoRow(label: "转化次数", value: "\(customer.conversions.count) 次")
                 InfoRow(label: "导入日期", value: customer.importDayDisplay)
