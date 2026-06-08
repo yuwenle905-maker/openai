@@ -1,15 +1,16 @@
 // MARK: - TextParser.swift
-// 手动文本正则解析引擎 — 支持批量粘贴 "姓名 状态 金额"
+// 手动文本批量录入解析引擎
+// 新策略：不依赖空格，从右向左提取「金额→状态关键词→剩余为姓名」
 
 import Foundation
 
-// MARK: 解析错误类型（满足 Error 协议）
+// MARK: 解析错误
 enum ParseError: Error {
     case formatMismatch(String)
     case invalidAmount(String)
 }
 
-// MARK: 单条解析结果（满足 Identifiable 供 ForEach 使用）
+// MARK: 单条解析结果
 struct TextParseResult: Identifiable {
     let id = UUID()
     let rawLine: String
@@ -18,7 +19,7 @@ struct TextParseResult: Identifiable {
     let amount: Double
 }
 
-// MARK: 解析错误行信息（供 UI 展示）
+// MARK: 解析错误行
 struct TextParseError: Identifiable {
     let id = UUID()
     let lineNumber: Int
@@ -26,26 +27,34 @@ struct TextParseError: Identifiable {
     let reason: String
 }
 
-// MARK: 解析器
+// MARK: 主解析器
 enum TextParser {
 
-    // 修复 Bug 3：用 \s+ 同时兼容多个空格、Tab，并在预处理中覆盖全角空格
-    // 格式：姓名<分隔符>状态<分隔符>金额，分隔符可为任意空白
-    private static let linePattern = try! NSRegularExpression(
-        pattern: #"^(\S+)\s+(\S+)\s+(\d+(?:\.\d+)?)\s*$"#
+    // 状态关键词表（按优先级顺序）
+    private static let conversionKeywords: [(keywords: [String], type: ConversionType)] = [
+        (["四次", "4次", "第四"],  .fourth),
+        (["三次", "3次", "第三"],  .third),
+        (["二次", "2次", "第二", "复购"], .second),
+        (["新单", "首单", "一次", "1次", "第一", "新"], .newOrder),
+    ]
+
+    // 末尾金额正则：匹配行末的数字（含小数）
+    private static let trailingAmountPattern = try! NSRegularExpression(
+        pattern: #"(\d+(?:[.,]\d+)?)\s*[元￥]?\s*$"#
     )
 
-    // MARK: 批量解析多行文本
-    /// 返回 (成功结果列表, 解析失败行列表)
+    // MARK: 批量解析
     static func parse(_ text: String) -> (results: [TextParseResult], errors: [TextParseError]) {
-        // 预处理：统一各种空白/分隔符为半角空格
+        // 预处理：全角/特殊空格/Tab/中文标点统一为半角空格
         let normalized = text
-            .replacingOccurrences(of: "\u{3000}", with: " ")   // 全角空格
-            .replacingOccurrences(of: "\u{00A0}", with: " ")   // 不间断空格
-            .replacingOccurrences(of: "\u{2003}", with: " ")   // Em Space
-            .replacingOccurrences(of: "\t",       with: " ")   // Tab
-            .replacingOccurrences(of: "，",        with: " ")   // 中文逗号
-            .replacingOccurrences(of: "、",        with: " ")   // 顿号
+            .replacingOccurrences(of: "\u{3000}", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\u{2003}", with: " ")
+            .replacingOccurrences(of: "\t",        with: " ")
+            .replacingOccurrences(of: "，",         with: " ")
+            .replacingOccurrences(of: "、",         with: " ")
+            .replacingOccurrences(of: "　",         with: " ")
+
         let lines = normalized
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -54,65 +63,76 @@ enum TextParser {
         var results: [TextParseResult] = []
         var errors:  [TextParseError]  = []
 
-        for (index, line) in lines.enumerated() {
-            let lineNumber = index + 1
-            switch parseSingleLine(line) {
+        for (i, line) in lines.enumerated() {
+            switch parseLine(line) {
             case .success(let r):
                 results.append(r)
             case .failure(let err):
                 let reason: String
                 switch err {
-                case .formatMismatch(let msg):  reason = msg
-                case .invalidAmount(let msg):   reason = msg
+                case .formatMismatch(let m): reason = m
+                case .invalidAmount(let m):  reason = m
                 }
-                errors.append(TextParseError(lineNumber: lineNumber, rawLine: line, reason: reason))
+                errors.append(TextParseError(lineNumber: i + 1, rawLine: line, reason: reason))
             }
         }
         return (results, errors)
     }
 
-    // MARK: 解析单行
-    static func parseSingleLine(_ line: String) -> Result<TextParseResult, ParseError> {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let range = NSRange(trimmed.startIndex..., in: trimmed)
-
-        guard let match = linePattern.firstMatch(in: trimmed, range: range),
-              let nameRange   = Range(match.range(at: 1), in: trimmed),
-              let typeRange   = Range(match.range(at: 2), in: trimmed),
-              let amountRange = Range(match.range(at: 3), in: trimmed)
-        else {
-            return .failure(.formatMismatch("格式不符：需要「姓名 状态 金额」，例如「张三 新单 4280」"))
+    // MARK: 单行解析（不依赖空格）
+    static func parseLine(_ raw: String) -> Result<TextParseResult, ParseError> {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty else {
+            return .failure(.formatMismatch("空行"))
         }
 
-        let name      = String(trimmed[nameRange])
-        let typeRaw   = String(trimmed[typeRange])
-        let amountStr = String(trimmed[amountRange])
-
+        // 1. 从末尾提取金额
+        let nsRange = NSRange(s.startIndex..., in: s)
+        guard let amountMatch = trailingAmountPattern.firstMatch(in: s, range: nsRange),
+              let amtRange = Range(amountMatch.range(at: 1), in: s) else {
+            return .failure(.formatMismatch("找不到金额数字，请确保行末包含金额，例如：张三新单4280"))
+        }
+        let amountStr = String(s[amtRange]).replacingOccurrences(of: ",", with: "")
         guard let amount = Double(amountStr), amount >= 0 else {
             return .failure(.invalidAmount("金额解析失败：\(amountStr)"))
         }
 
+        // 去掉末尾金额部分，得到前缀
+        let prefixEnd = amountMatch.range.location == NSNotFound
+            ? s.endIndex
+            : s.index(s.startIndex, offsetBy: amountMatch.range.location)
+        let prefix = String(s[s.startIndex..<prefixEnd])
+            .trimmingCharacters(in: .whitespaces)
+
+        // 2. 从前缀中识别状态关键词
+        var convType: ConversionType = .unknown
+        var nameCandidate = prefix
+
+        for entry in conversionKeywords {
+            for kw in entry.keywords {
+                if prefix.contains(kw) {
+                    convType = entry.type
+                    // 去掉关键词，剩余为姓名
+                    nameCandidate = prefix
+                        .replacingOccurrences(of: kw, with: "")
+                        .trimmingCharacters(in: .whitespaces)
+                    break
+                }
+            }
+            if convType != .unknown { break }
+        }
+
+        // 3. 姓名为空检查
+        let name = nameCandidate.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else {
+            return .failure(.formatMismatch("解析出的姓名为空，请检查格式。示例：张三新单4280"))
+        }
+
         return .success(TextParseResult(
-            rawLine:        line,
+            rawLine:        raw,
             name:           name,
-            conversionType: mapConversionType(typeRaw),
+            conversionType: convType,
             amount:         amount
         ))
-    }
-
-    // MARK: 转化类型模糊映射
-    private static func mapConversionType(_ raw: String) -> ConversionType {
-        switch raw {
-        case let s where s.contains("新单") || s.contains("首单") || s.contains("新"):
-            return .newOrder
-        case let s where s.contains("二次") || s.contains("二") || s.contains("2"):
-            return .second
-        case let s where s.contains("三次") || s.contains("三") || s.contains("3"):
-            return .third
-        case let s where s.contains("四次") || s.contains("四") || s.contains("4"):
-            return .fourth
-        default:
-            return .unknown
-        }
     }
 }

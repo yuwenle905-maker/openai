@@ -4,7 +4,6 @@
 <plist version="1.0">
 <dict>
 
-    <!-- App 基础信息 -->
     <key>CFBundleName</key>
     <string>私域CRM</string>
     <key>CFBundleDisplayName</key>
@@ -18,36 +17,35 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UIRequiredDeviceCapabilities</key>
-    <array>
-        <string>armv7</string>
-    </array>
+    <array><string>armv7</string></array>
     <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-    </array>
+    <array><string>UIInterfaceOrientationPortrait</string></array>
     <key>UILaunchScreen</key>
     <dict/>
 
-    <!-- Face ID 权限说明 -->
+    <!-- Face ID -->
     <key>NSFaceIDUsageDescription</key>
     <string>使用 Face ID 快速安全地解锁 CRM 数据</string>
 
     <!--
-        Bug 2 修复：注册文档类型，让微信/钉钉「用其他App打开」时能找到本App。
-        必须同时注册 public.data / public.content 作为兜底，
-        否则微信不会在分享列表中显示本App图标。
+        微信「用其他App打开」修复：
+        必须同时设置这两个 key，App 才会出现在系统分享/打开列表中。
+        UIFileSharingEnabled  → 让 App 出现在「文件」App 和分享面板
+        LSSupportsOpeningDocumentsInPlace → 允许就地打开文档（不复制）
     -->
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+
+    <!-- 文档类型注册 -->
     <key>CFBundleDocumentTypes</key>
     <array>
 
-        <!-- Excel xlsx -->
         <dict>
-            <key>CFBundleTypeName</key>
-            <string>Excel 工作表 (xlsx)</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
+            <key>CFBundleTypeName</key><string>Excel xlsx</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>org.openxmlformats.spreadsheetml.sheet</string>
@@ -55,85 +53,63 @@
             </array>
         </dict>
 
-        <!-- Excel xls -->
         <dict>
-            <key>CFBundleTypeName</key>
-            <string>Excel 工作表 (xls)</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
+            <key>CFBundleTypeName</key><string>Excel xls</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>com.microsoft.excel.xls</string>
             </array>
         </dict>
 
-        <!-- CSV -->
         <dict>
-            <key>CFBundleTypeName</key>
-            <string>CSV 文件</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
+            <key>CFBundleTypeName</key><string>CSV</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>public.comma-separated-values-text</string>
-                <string>public.delimited-values-text</string>
             </array>
         </dict>
 
-        <!-- CRM 加密备份文件（Owner 级别，微信发送后可用本App打开）-->
+        <!-- CRM 备份文件，Owner 级别，微信发来后本App优先打开 -->
         <dict>
-            <key>CFBundleTypeName</key>
-            <string>CRM 加密备份</string>
-            <key>CFBundleTypeRole</key>
-            <string>Editor</string>
-            <key>LSHandlerRank</key>
-            <string>Owner</string>
+            <key>CFBundleTypeName</key><string>CRM 备份</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Owner</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>com.yourname.crmbackup</string>
-                <string>public.data</string>
             </array>
         </dict>
 
-        <!-- 兜底：接受所有文件（确保微信「用其他App打开」能显示本App）-->
+        <!-- 兜底：接受所有数据文件，确保微信分享时能找到本App -->
         <dict>
-            <key>CFBundleTypeName</key>
-            <string>通用文件</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
+            <key>CFBundleTypeName</key><string>通用数据文件</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
-                <string>public.content</string>
                 <string>public.data</string>
+                <string>public.content</string>
             </array>
         </dict>
 
     </array>
 
-    <!-- UTI 导出声明（自定义备份文件格式）-->
+    <!-- 自定义 UTI 导出 -->
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
-            <key>UTTypeIdentifier</key>
-            <string>com.yourname.crmbackup</string>
-            <key>UTTypeDescription</key>
-            <string>CRM 加密备份</string>
+            <key>UTTypeIdentifier</key><string>com.yourname.crmbackup</string>
+            <key>UTTypeDescription</key><string>CRM 加密备份</string>
             <key>UTTypeConformsTo</key>
-            <array>
-                <string>public.data</string>
-            </array>
+            <array><string>public.data</string></array>
             <key>UTTypeTagSpecification</key>
             <dict>
                 <key>public.filename-extension</key>
-                <array>
-                    <string>crmbackup</string>
-                </array>
+                <array><string>crmbackup</string></array>
                 <key>public.mime-type</key>
                 <string>application/octet-stream</string>
             </dict>

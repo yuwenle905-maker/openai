@@ -2,7 +2,6 @@
 // 文件导入界面 — 文档选择器 + 弹窗调度（iOS 15 兼容）
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ImportView: View {
 
@@ -29,17 +28,11 @@ struct ImportView: View {
                 Spacer()
             }
             .navigationTitle("导入数据")
-            // 修复 Bug 1：移除 .spreadsheet（iOS 不识别），改用 public.data 兜底
-            // allowsMultipleSelection: false → 回调类型为 Result<[URL], Error>
+            // 根本修复：只传 .data 让系统不过滤任何文件
+            // xlsx/xls/csv 在 iOS 上 UTType 注册不稳定，.data 兜底最可靠
             .fileImporter(
                 isPresented: $showingFilePicker,
-                allowedContentTypes: [
-                    UTType(filenameExtension: "xlsx") ?? .data,
-                    UTType(filenameExtension: "xls")  ?? .data,
-                    UTType(filenameExtension: "csv")  ?? .data,
-                    .commaSeparatedText,
-                    .data                               // 兜底：允许所有文件被选中
-                ],
+                allowedContentTypes: [.data],
                 allowsMultipleSelection: false
             ) { result in
                 handleFilePick(result)

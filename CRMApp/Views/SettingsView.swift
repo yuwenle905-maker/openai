@@ -23,34 +23,43 @@ struct SettingsView: View {
             Form {
 
                 // ── 数据单价 ───────────────────────────────────
-                // 修复 Bug 4：@FocusState onChange 在 iOS 15 不稳定，改为明确的"确认"按钮
+                // 根本修复：把 TextField 和保存逻辑放在独立行，
+                // 不在 Form HStack 内嵌 Button（会被 Form cell 吞掉点击）
                 Section {
+                    // 当前值展示行
                     HStack {
-                        Text("数据单价")
+                        Text("当前单价")
                         Spacer()
-                        TextField("元/条", text: $priceText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 90)
-                            .onAppear { priceText = "\(Int(store.settings.leadUnitPrice))" }
-                        Text("元/条").foregroundColor(.secondary)
-                        Button("确认") {
-                            if let value = Double(priceText), value > 0 {
-                                store.settings.leadUnitPrice = value
-                                store.save()
-                            }
-                            UIApplication.shared.sendAction(
-                                #selector(UIResponder.resignFirstResponder),
-                                to: nil, from: nil, for: nil
-                            )
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.blue)
+                        Text("¥\(Int(store.settings.leadUnitPrice)) / 条")
+                            .foregroundColor(.blue)
+                            .fontWeight(.semibold)
                     }
+                    // 修改输入行：用 .onSubmit 保存，键盘右下角「完成」即可触发
+                    HStack {
+                        Text("修改为")
+                        TextField("输入新单价", text: $priceText)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .onAppear { priceText = "" }
+                            .onSubmit { applyNewPrice() }
+                    }
+                    // 保存按钮独占一行，避免被 Form Cell 吞掉
+                    Button(action: applyNewPrice) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("保存新单价")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.white)
+                        .padding(.vertical, 8)
+                        .background(Color.blue)
+                        .cornerRadius(8)
+                    }
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 } header: {
                     Text("ROI 计算参数")
                 } footer: {
-                    Text("修改后点击「确认」立即生效。本月成本 = 导入总条数 × 数据单价").font(.caption)
+                    Text("输入新单价后点「保存新单价」，或键盘点「完成」即可生效。").font(.caption)
                 }
 
                 // ── 安全锁（自由开关）─────────────────────────
@@ -159,6 +168,20 @@ struct SettingsView: View {
             }
         }
     }
+    // MARK: 保存新单价
+    private func applyNewPrice() {
+        let cleaned = priceText.trimmingCharacters(in: .whitespaces)
+        if let value = Double(cleaned), value > 0 {
+            store.settings.leadUnitPrice = value
+            store.save()
+            priceText = ""
+        }
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
+    }
+
 }
 
 // MARK: - PIN 设置弹窗
