@@ -61,6 +61,7 @@ struct Customer: Identifiable, Codable, Equatable {
     var age: Int?
     var height: Double?
     var weight: Double?
+    var gender: String = "未知"
 
     // 线索金额（智能导入时提取，仅用于画像统计，不计入营业额）
     var leadAmount: Double?
@@ -104,8 +105,9 @@ struct Customer: Identifiable, Codable, Equatable {
          age: Int?           = nil,
          height: Double?     = nil,
          weight: Double?     = nil,
+         gender: String      = "未知",
          leadAmount: Double? = nil,
-         lineCost: Double    = 1200,   // 默认单价，入库时由调用方传入当前设置值
+         lineCost: Double    = 1200,
          dataType: CustomerDataType = .fullCustomer,
          importBatchID: UUID? = nil,
          importDate: Date    = Date(),
@@ -116,6 +118,7 @@ struct Customer: Identifiable, Codable, Equatable {
         self.age           = age
         self.height        = height
         self.weight        = weight
+        self.gender        = gender
         self.leadAmount    = leadAmount
         self.lineCost      = lineCost
         self.dataType      = dataType

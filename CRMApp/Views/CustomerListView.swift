@@ -341,6 +341,13 @@ struct CustomerRow: View {
                             .background(Color.orange.opacity(0.15))
                             .foregroundColor(.orange).cornerRadius(3)
                     }
+                    if customer.gender != "未知" {
+                        Text(customer.gender).font(.caption2)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(customer.gender == "女" ? Color.pink.opacity(0.15) : Color.blue.opacity(0.15))
+                            .foregroundColor(customer.gender == "女" ? .pink : .blue)
+                            .cornerRadius(3)
+                    }
                 }
                 Text(customer.phone).font(.caption).foregroundColor(.secondary)
                 if let addr = customer.address {
@@ -372,12 +379,15 @@ struct CustomerDetailView: View {
     @Environment(\.dismiss) var dismiss
     let customer: Customer
 
+    @State private var showEditSheet = false
+
     var body: some View {
         List {
             Section(header: Text("基础资料")) {
                 InfoRow(label: "姓名",  value: customer.name)
                 InfoRow(label: "电话",  value: customer.phone)
                 InfoRow(label: "地址",  value: customer.address ?? "—")
+                InfoRow(label: "性别",  value: customer.gender)
                 InfoRow(label: "年龄",  value: customer.age.map    { "\($0) 岁"  } ?? "—")
                 InfoRow(label: "身高",  value: customer.height.map { "\($0) cm"  } ?? "—")
                 InfoRow(label: "体重",  value: customer.weight.map { "\($0) kg"  } ?? "—")
@@ -432,5 +442,116 @@ struct CustomerDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(customer.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("编辑") { showEditSheet = true }
+            }
+        }
+        .sheet(isPresented: $showEditSheet) {
+            CustomerEditSheet(customer: customer)
+                .environmentObject(store)
+        }
+    }
+}
+
+// MARK: - 客户编辑 Sheet
+struct CustomerEditSheet: View {
+
+    @EnvironmentObject var store: DataStore
+    @Environment(\.dismiss) var dismiss
+
+    let customer: Customer
+
+    @State private var name:    String
+    @State private var phone:   String
+    @State private var address: String
+    @State private var ageStr:    String
+    @State private var heightStr: String
+    @State private var weightStr: String
+    @State private var gender:  String
+    @State private var note:    String
+
+    private let genderOptions = ["未知", "女", "男"]
+
+    init(customer: Customer) {
+        self.customer = customer
+        _name      = State(initialValue: customer.name)
+        _phone     = State(initialValue: customer.phone)
+        _address   = State(initialValue: customer.address ?? "")
+        _ageStr    = State(initialValue: customer.age.map    { String($0) } ?? "")
+        _heightStr = State(initialValue: customer.height.map { String(Int($0)) } ?? "")
+        _weightStr = State(initialValue: customer.weight.map { String(Int($0)) } ?? "")
+        _gender    = State(initialValue: customer.gender)
+        _note      = State(initialValue: "")
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("基础资料")) {
+                    HStack {
+                        Text("姓名").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("姓名", text: $name)
+                    }
+                    HStack {
+                        Text("电话").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("手机号", text: $phone).keyboardType(.phonePad)
+                    }
+                    HStack {
+                        Text("地址").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("收货地址", text: $address)
+                    }
+                }
+
+                Section(header: Text("体征数据")) {
+                    HStack {
+                        Text("身高").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("cm", text: $heightStr).keyboardType(.numberPad)
+                    }
+                    HStack {
+                        Text("体重").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("kg", text: $weightStr).keyboardType(.numberPad)
+                    }
+                    HStack {
+                        Text("年龄").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("岁", text: $ageStr).keyboardType(.numberPad)
+                    }
+                    Picker("性别", selection: $gender) {
+                        ForEach(genderOptions, id: \.self) { Text($0) }
+                    }
+                }
+
+                Section(header: Text("备注")) {
+                    TextEditor(text: $note)
+                        .frame(minHeight: 72)
+                }
+            }
+            .navigationTitle("编辑客户")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                        .fontWeight(.semibold)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", role: .cancel) { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func save() {
+        var updated         = customer
+        updated.name        = name.trimmingCharacters(in: .whitespaces)
+        updated.phone       = phone.trimmingCharacters(in: .whitespaces)
+        updated.address     = address.trimmingCharacters(in: .whitespaces).isEmpty
+                              ? nil : address.trimmingCharacters(in: .whitespaces)
+        updated.age         = Int(ageStr.trimmingCharacters(in: .whitespaces))
+        updated.height      = Double(heightStr.trimmingCharacters(in: .whitespaces))
+        updated.weight      = Double(weightStr.trimmingCharacters(in: .whitespaces))
+        updated.gender      = gender
+        store.updateCustomer(updated)
+        dismiss()
     }
 }

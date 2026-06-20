@@ -179,8 +179,9 @@ struct ImportView: View {
                     age:           row.age,
                     height:        row.height,
                     weight:        row.weight,
+                    gender:        row.gender,
                     leadAmount:    row.leadAmount,
-                    lineCost:      currentLineCost,  // 历史单价固化，后续改价不影响此值
+                    lineCost:      currentLineCost,
                     dataType:      .fullCustomer,
                     importBatchID: batchID,
                     importDate:    Date()
@@ -345,6 +346,7 @@ struct ImportConfirmSheet: View {
                     newCustomer.age        = row.age        ?? existing.age
                     newCustomer.height     = row.height     ?? existing.height
                     newCustomer.weight     = row.weight     ?? existing.weight
+                    newCustomer.gender     = row.gender != "未知" ? row.gender : existing.gender
                     newCustomer.leadAmount = row.leadAmount ?? existing.leadAmount
                     store.updateCustomer(newCustomer)
                 } else {
@@ -399,6 +401,7 @@ struct ParsedRowCell: View {
                 if let age = row.age    { Text("\(age)岁").font(.caption2).foregroundColor(.secondary) }
                 if let h   = row.height { Text("\(Int(h))cm").font(.caption2).foregroundColor(.secondary) }
                 if let w   = row.weight { Text("\(Int(w))kg").font(.caption2).foregroundColor(.secondary) }
+                if row.gender != "未知" { Text(row.gender).font(.caption2).foregroundColor(.secondary) }
                 if let p   = row.productNote { Text(p).font(.caption2).foregroundColor(.secondary).lineLimit(1) }
             }
         }
