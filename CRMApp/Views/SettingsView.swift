@@ -2,6 +2,7 @@
 // 全局设置 — 数据单价、安全锁（可自由开关）、备份/恢复（iOS 15 兼容）
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
 
@@ -16,17 +17,19 @@ struct SettingsView: View {
     @State private var showShareSheet    = false
     @State private var alertMessage:     String = ""
     @State private var showAlert         = false
-    @State private var showClearConfirm  = false   // 清空确认弹窗
+    @State private var showClearConfirm  = false
+
+    // 明文 JSON 备份（无密码，最简单可靠）
+    @State private var showPlainShareSheet = false
+    @State private var plainBackupURL:     URL?
+    @State private var showFileImporter    = false
 
     var body: some View {
         NavigationView {
             Form {
 
                 // ── 数据单价 ───────────────────────────────────
-                // 根本修复：把 TextField 和保存逻辑放在独立行，
-                // 不在 Form HStack 内嵌 Button（会被 Form cell 吞掉点击）
                 Section {
-                    // 当前值展示行
                     HStack {
                         Text("当前单价")
                         Spacer()
@@ -34,7 +37,6 @@ struct SettingsView: View {
                             .foregroundColor(.blue)
                             .fontWeight(.semibold)
                     }
-                    // 修改输入行：用 .onSubmit 保存，键盘右下角「完成」即可触发
                     HStack {
                         Text("修改为")
                         TextField("输入新单价", text: $priceText)
@@ -43,7 +45,6 @@ struct SettingsView: View {
                             .onAppear { priceText = "" }
                             .onSubmit { applyNewPrice() }
                     }
-                    // 保存按钮独占一行，避免被 Form Cell 吞掉
                     Button(action: applyNewPrice) {
                         HStack {
                             Image(systemName: "checkmark.circle.fill")
@@ -62,7 +63,7 @@ struct SettingsView: View {
                     Text("输入新单价后点「保存新单价」，或键盘点「完成」即可生效。").font(.caption)
                 }
 
-                // ── 安全锁（自由开关）─────────────────────────
+                // ── 安全锁 ─────────────────────────────────────
                 Section {
                     let bioType = lockManager.biometricType
                     if bioType != "不支持" {
@@ -95,26 +96,46 @@ struct SettingsView: View {
                         .font(.caption)
                 }
 
-                // ── 备份与恢复 ─────────────────────────────────
+                // ── 数据安全中心（双重保险）────────────────────
                 Section {
+                    // A：导出备份（明文 JSON，可通过微信/AirDrop/存储到文件保存）
+                    Button {
+                        exportPlainBackup()
+                    } label: {
+                        Label("导出备份数据（分享到微信/文件）", systemImage: "square.and.arrow.up")
+                            .foregroundColor(.blue)
+                    }
+
+                    // B：导入备份（系统文件选择器，选择之前导出的 JSON）
+                    Button {
+                        showFileImporter = true
+                    } label: {
+                        Label("导入备份数据（从文件恢复）", systemImage: "square.and.arrow.down")
+                            .foregroundColor(.orange)
+                    }
+
+                    // 原加密备份（保留，用于高安全场景）
                     Button {
                         showBackupSheet = true
                     } label: {
-                        Label("加密备份数据", systemImage: "lock.doc.fill")
+                        Label("加密备份（高级）", systemImage: "lock.doc.fill")
+                            .foregroundColor(.secondary)
+                            .font(.subheadline)
                     }
                     Button {
                         showRestoreSheet = true
                     } label: {
-                        Label("从备份恢复", systemImage: "arrow.counterclockwise.circle.fill")
+                        Label("从加密备份恢复（高级）", systemImage: "arrow.counterclockwise.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.subheadline)
                     }
-                    .foregroundColor(.orange)
                 } header: {
-                    Text("数据管理")
+                    Text("数据安全中心")
                 } footer: {
-                    Text("备份文件使用 AES-256-GCM 加密，需凭密码才能解密恢复。").font(.caption)
+                    Text("【导出备份】将全部数据导出为 JSON 文件，可存入微信收藏、文件 App 或发送给自己。覆盖安装前务必先备份！").font(.caption)
                 }
 
-                // ── 危险操作：一键清空历史数据 ──────────────────
+                // ── 危险操作 ───────────────────────────────────
                 Section {
                     Button {
                         showClearConfirm = true
@@ -133,9 +154,7 @@ struct SettingsView: View {
                         .font(.caption)
                 }
 
-                // ── 数据统计 ───────────────────────────────────
-
-                // ── 数据统计（iOS 15 兼容：InfoRow 代替 LabeledContent）
+                // ── 概览 ───────────────────────────────────────
                 Section(header: Text("概览")) {
                     InfoRow(label: "客户总数",  value: "\(store.customers.count) 人")
                     InfoRow(label: "导入批次数", value: "\(store.batches.count) 次")
@@ -143,14 +162,12 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
-            // ── 清空历史数据：二次确认弹窗 ──────────────────────
             .confirmationDialog(
                 "确认清空所有历史数据？",
                 isPresented: $showClearConfirm,
                 titleVisibility: .visible
             ) {
                 Button("确认清空", role: .destructive) {
-                    // 只清空内存和 JSON 数据文件，不删除备份
                     store.customers = []
                     store.batches   = []
                     store.save()
@@ -159,7 +176,7 @@ struct SettingsView: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("此操作将删除 App 内所有客户记录和导入批次，但不会删除你通过「加密备份」生成的备份文件。确认后无法撤销。")
+                Text("此操作将删除 App 内所有客户记录和导入批次，但不会删除备份文件。确认后无法撤销。")
             }
             .sheet(isPresented: $showPINSetup) {
                 PINSetupSheet(currentPIN: store.settings.appPIN) { pin in
@@ -168,6 +185,20 @@ struct SettingsView: View {
                     store.save()
                     lockManager.refresh(settings: store.settings)
                 }
+            }
+            // 明文 JSON 分享 Sheet
+            .sheet(isPresented: $showPlainShareSheet) {
+                if let url = plainBackupURL {
+                    ShareSheet(items: [url])
+                }
+            }
+            // 文件导入器（选 JSON 恢复）
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.json, .data],
+                allowsMultipleSelection: false
+            ) { result in
+                handleFileImport(result: result)
             }
             .sheet(isPresented: $showBackupSheet) {
                 BackupSheet { password in
@@ -207,6 +238,97 @@ struct SettingsView: View {
             }
         }
     }
+
+    // MARK: 明文 JSON 导出
+    private func exportPlainBackup() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting    = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+
+        struct PlainBackup: Encodable {
+            let version: Int
+            let exportDate: String
+            let customers: [Customer]
+            let batches:   [ImportBatch]
+        }
+
+        let fmt = ISO8601DateFormatter()
+        let payload = PlainBackup(
+            version:    2,
+            exportDate: fmt.string(from: Date()),
+            customers:  store.customers,
+            batches:    store.batches
+        )
+
+        guard let data = try? encoder.encode(payload) else {
+            alertMessage = "导出失败：序列化错误"; showAlert = true; return
+        }
+
+        // 写入临时文件，方便分享
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CRMBackup_\(fmt.string(from: Date()).prefix(10)).json")
+        do {
+            try data.write(to: tmpURL, options: .atomicWrite)
+            plainBackupURL    = tmpURL
+            showPlainShareSheet = true
+        } catch {
+            alertMessage = "写入临时文件失败：\(error.localizedDescription)"
+            showAlert    = true
+        }
+    }
+
+    // MARK: 文件导入恢复
+    private func handleFileImport(result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let err):
+            alertMessage = "选择文件失败：\(err.localizedDescription)"; showAlert = true
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            // 需要安全访问沙盒外文件
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+
+            guard let data = try? Data(contentsOf: url) else {
+                alertMessage = "无法读取文件，请检查权限"; showAlert = true; return
+            }
+
+            // 先尝试明文格式
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+
+            struct PlainBackup: Decodable {
+                let customers: [Customer]
+                let batches:   [ImportBatch]?
+            }
+
+            if let payload = try? decoder.decode(PlainBackup.self, from: data) {
+                DispatchQueue.main.async {
+                    store.customers = payload.customers
+                    store.batches   = payload.batches ?? []
+                    store.save()
+                    alertMessage = "✅ 恢复成功！共导入 \(store.customers.count) 位客户"
+                    showAlert    = true
+                }
+                return
+            }
+
+            // 再尝试加密格式（BackupPayload）
+            if let payload = try? decoder.decode(BackupPayload.self, from: data) {
+                DispatchQueue.main.async {
+                    store.customers = payload.customers
+                    store.batches   = payload.batches
+                    store.save()
+                    alertMessage = "✅ 恢复成功！共导入 \(store.customers.count) 位客户"
+                    showAlert    = true
+                }
+                return
+            }
+
+            alertMessage = "文件格式不支持，请选择由本 App 导出的 JSON 备份文件"
+            showAlert    = true
+        }
+    }
+
     // MARK: 保存新单价
     private func applyNewPrice() {
         let cleaned = priceText.trimmingCharacters(in: .whitespaces)
@@ -220,7 +342,6 @@ struct SettingsView: View {
             to: nil, from: nil, for: nil
         )
     }
-
 }
 
 // MARK: - PIN 设置弹窗

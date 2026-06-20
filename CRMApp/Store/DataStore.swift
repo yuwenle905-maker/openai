@@ -53,9 +53,10 @@ class DataStore: ObservableObject {
 
     // MARK: 持久化
     func load() {
-        customers = decode([Customer].self, from: DataStore.customersURL)    ?? []
-        batches   = decode([ImportBatch].self, from: DataStore.batchesURL)   ?? []
-        settings  = decode(AppSettings.self, from: DataStore.settingsURL)    ?? AppSettings()
+        // 防御性解码：单个字段缺失时给默认值，而非整体失败清空数据
+        customers = safeDecodeArray([Customer].self, from: DataStore.customersURL) ?? []
+        batches   = safeDecodeArray([ImportBatch].self, from: DataStore.batchesURL) ?? []
+        settings  = decode(AppSettings.self, from: DataStore.settingsURL) ?? AppSettings()
     }
 
     func save() {
@@ -168,5 +169,31 @@ class DataStore: ObservableObject {
     private func encode<T: Encodable>(_ value: T, to url: URL) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         try? data.write(to: url, options: .atomicWrite)
+    }
+
+    /// 防御性数组解码：整体 decode 失败时逐条尝试，保住能解的数据
+    /// 适用于模型升级（新增字段）后覆盖安装导致旧数据无法整体解析的场景
+    private func safeDecodeArray<T: Decodable>(_ type: [T].Type, from url: URL) -> [T]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+
+        // 优先尝试整体解码（新版本正常路径）
+        let decoder = JSONDecoder()
+        if let result = try? decoder.decode([T].self, from: data) {
+            return result
+        }
+
+        // 整体失败：逐条解码（兼容旧版本字段缺失）
+        guard let rawArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+        var recovered: [T] = []
+        for item in rawArray {
+            guard let itemData = try? JSONSerialization.data(withJSONObject: item) else { continue }
+            if let obj = try? decoder.decode(T.self, from: itemData) {
+                recovered.append(obj)
+            }
+        }
+        // 只要恢复了至少一条就返回，防止全量失败
+        return recovered.isEmpty ? nil : recovered
     }
 }
