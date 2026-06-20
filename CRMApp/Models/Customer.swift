@@ -63,6 +63,7 @@ struct Customer: Identifiable, Codable, Equatable {
     var weight: Double?
     var gender: String = "未知"
     var customerNumber: String?   // 手动录入的客户编号，系统不自动生成
+    var costEnabled: Bool = false  // 是否纳入成本计算。流水录入默认false，智能导入默认true
 
     // 线索金额（智能导入时提取，仅用于画像统计，不计入营业额）
     var leadAmount: Double?
@@ -108,6 +109,7 @@ struct Customer: Identifiable, Codable, Equatable {
          weight: Double?         = nil,
          gender: String          = "未知",
          customerNumber: String? = nil,
+         costEnabled: Bool       = false,
          leadAmount: Double?     = nil,
          lineCost: Double        = 1200,
          dataType: CustomerDataType = .fullCustomer,
@@ -122,6 +124,7 @@ struct Customer: Identifiable, Codable, Equatable {
         self.weight         = weight
         self.gender         = gender
         self.customerNumber = customerNumber
+        self.costEnabled    = costEnabled
         self.leadAmount     = leadAmount
         self.lineCost       = lineCost
         self.dataType       = dataType

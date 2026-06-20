@@ -5,13 +5,15 @@ import SwiftUI
 
 // MARK: - 活跃 Sheet 枚举，确保同一时刻只有一个 sheet 存在，彻底防止白屏死锁
 private enum ActiveSheet: Identifiable {
-    case newCustomer(TextParseResult)   // 场景A：库中无此人，建新档
-    case matchExisting(TextParseResult, [Customer])  // 场景B：库中有同名，让用户选择
+    case newCustomer(TextParseResult)                        // 场景A：库中无此人，建新档
+    case matchExisting(TextParseResult, [Customer])          // 场景B：库中有同名，让用户选择
+    case batchDuplicate(name: String, results: [TextParseResult])  // 场景C：批内同名合并
 
     var id: String {
         switch self {
-        case .newCustomer(let r):       return "new_\(r.id)"
-        case .matchExisting(let r, _):  return "match_\(r.id)"
+        case .newCustomer(let r):           return "new_\(r.id)"
+        case .matchExisting(let r, _):      return "match_\(r.id)"
+        case .batchDuplicate(let n, _):     return "batch_\(n)"
         }
     }
 }
@@ -254,6 +256,30 @@ struct TextInputView: View {
                     }
                 )
                 .environmentObject(store)
+
+            case .batchDuplicate(let name, let results):
+                BatchDuplicateSheet(
+                    name:     name,
+                    results:  results,
+                    onMerge: {
+                        // 合并：把所有同名记录作为多条 ConversionRecord 写入同一客户
+                        activeSheet = nil
+                        DispatchQueue.main.async {
+                            commitBatchMerge(name: name, results: results)
+                            processNextSave()
+                        }
+                    },
+                    onSeparate: {
+                        // 独立新建：每条各自建档（转回逐条队列处理）
+                        activeSheet = nil
+                        DispatchQueue.main.async {
+                            // 把这些条目重新推入队列头部逐条处理
+                            pendingQueue = results + pendingQueue
+                            processNextSave()
+                        }
+                    }
+                )
+                .environmentObject(store)
             }
         }
     }
@@ -263,8 +289,22 @@ struct TextInputView: View {
         editorFocused   = false
         matchedCount    = 0
         newBuiltCount   = 0
-        pendingQueue    = parseResults
-        processNextSave()
+
+        // 批内同名检测：先把本批 parseResults 按姓名分组
+        // 若某个姓名出现 2+ 次，先弹合并确认，再处理剩余
+        let grouped = Dictionary(grouping: parseResults) { $0.name }
+        let batchDuplicates = grouped.filter { $0.value.count > 1 }
+
+        if let first = batchDuplicates.first {
+            // 从 pendingQueue 剔除这批同名条目，稍后根据用户选择再处理
+            let dupName = first.key
+            let dupResults = first.value
+            pendingQueue = parseResults.filter { $0.name != dupName }
+            activeSheet  = .batchDuplicate(name: dupName, results: dupResults)
+        } else {
+            pendingQueue = parseResults
+            processNextSave()
+        }
     }
 
     private func processNextSave() {
@@ -319,6 +359,36 @@ struct TextInputView: View {
         store.customers[idx].conversions.append(record)
         store.save()
         matchedCount += 1
+    }
+
+    // 批内同名合并：将多条同名记录作为多笔 ConversionRecord 写入同一客户档案
+    private func commitBatchMerge(name: String, results: [TextParseResult]) {
+        // 先检查库中是否已有同名客户
+        let existingIdx = store.customers.firstIndex(where: {
+            $0.name == name && $0.dataType == .fullCustomer
+        })
+        let records = results.map { r in
+            ConversionRecord(type: r.conversionType, amount: r.amount, date: Date())
+        }
+        if let idx = existingIdx {
+            // 追加到已有客户
+            store.customers[idx].conversions.append(contentsOf: records)
+            store.save()
+            matchedCount += results.count
+        } else {
+            // 新建一个客户，携带所有记录
+            let newCustomer = Customer(
+                name:        name,
+                phone:       "待补全_\(UUID().uuidString.prefix(8))",
+                lineCost:    store.settings.leadUnitPrice,
+                dataType:    .fullCustomer,
+                importDate:  Date(),
+                conversions: records
+            )
+            store.customers.append(newCustomer)
+            store.save()
+            newBuiltCount += 1
+        }
     }
 
     private func finalizeSave() {
@@ -601,6 +671,99 @@ struct LedgerMatchSheet: View {
                     }
             }
             .environmentObject(store)
+        }
+    }
+}
+
+// MARK: - 场景C：批内同名合并确认面板
+struct BatchDuplicateSheet: View {
+
+    @Environment(\.dismiss) var dismiss
+    let name:       String
+    let results:    [TextParseResult]
+    let onMerge:    () -> Void
+    let onSeparate: () -> Void
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.2.fill").foregroundColor(.orange)
+                            Text("检测到「\(name)」有 \(results.count) 笔成交记录")
+                                .font(.subheadline).fontWeight(.semibold)
+                        }
+                        Text("是否将以下记录合并为同一客户的多次连续订购？")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section(header: Text("本批次「\(name)」的所有记录")) {
+                    ForEach(results) { r in
+                        HStack {
+                            Text(r.conversionType.rawValue)
+                                .font(.subheadline).fontWeight(.semibold)
+                            Spacer()
+                            Text("¥\(Int(r.amount))").foregroundColor(.green).fontWeight(.bold)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
+                Section {
+                    // 合并按钮
+                    Button(action: onMerge) {
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.triangle.merge")
+                                Text("合并为同一客户的 \(results.count) 次订购")
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundColor(.white)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color.blue)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 4, trailing: 16))
+                    .listRowBackground(Color.clear)
+
+                    // 独立新建按钮
+                    Button(action: onSeparate) {
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.badge.plus")
+                                Text("各自独立新建（\(results.count) 个同名新客户）")
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundColor(.orange)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.orange.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("同名成交记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("合并处理", role: .cancel) { onMerge() }
+                }
+            }
         }
     }
 }

@@ -147,9 +147,8 @@ struct ImportView: View {
         let batchID       = UUID()
 
         for row in rows {
-            // 流水记录：只追加转化，不新增客户，不计入营业额
+            // 流水记录：追加转化到已有客户，金额写入 ConversionRecord
             if row.dataType == .ledgerEntry {
-                // 姓名+电话双重匹配，避免同名不同人误关联
                 let matchPhone = row.phone
                 if let idx = store.customers.firstIndex(where: {
                     $0.name == row.name &&
@@ -158,7 +157,7 @@ struct ImportView: View {
                 }) {
                     let record = ConversionRecord(
                         type:        row.conversionType,
-                        amount:      0,
+                        amount:      row.leadAmount ?? 0,   // 修复：写入真实金额
                         date:        Date(),
                         productNote: row.productNote
                     )
@@ -168,9 +167,19 @@ struct ImportView: View {
                 continue
             }
 
-            // 完整客户写入（forceNew = true 时强制新 UUID，不走电话查重）
+            // 完整客户写入
             let phone           = row.phone ?? "unknown_\(UUID().uuidString.prefix(8))"
             let currentLineCost = store.settings.leadUnitPrice
+            var conversions: [ConversionRecord] = []
+            // 如果有解析到金额，生成一条真实的初始成交记录
+            if let amt = row.leadAmount, amt > 0 {
+                conversions.append(ConversionRecord(
+                    type:        row.conversionType,
+                    amount:      amt,
+                    date:        Date(),
+                    productNote: row.productNote
+                ))
+            }
             let customer = Customer(
                 name:          row.name,
                 phone:         phone,
@@ -179,11 +188,13 @@ struct ImportView: View {
                 height:        row.height,
                 weight:        row.weight,
                 gender:        row.gender,
+                costEnabled:   true,   // 智能导入默认纳入成本计算
                 leadAmount:    row.leadAmount,
                 lineCost:      currentLineCost,
                 dataType:      .fullCustomer,
                 importBatchID: batchID,
-                importDate:    Date()
+                importDate:    Date(),
+                conversions:   conversions
             )
             store.addCustomer(customer)
             batchFull    += 1

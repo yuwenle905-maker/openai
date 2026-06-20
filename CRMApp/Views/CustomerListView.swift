@@ -39,14 +39,15 @@ struct CustomerListView: View {
         store.customers.filter { $0.dataType == .fullCustomer }
     }
 
-    // 搜索结果：全库检索（不受日期分类限制）
+    // 搜索结果：全库检索，支持姓名/电话/地址/编号模糊匹配
     private var searchResults: [Customer] {
         guard !searchText.isEmpty else { return [] }
         let q = searchText.lowercased()
         return store.customers.filter {
             $0.name.lowercased().contains(q) ||
             $0.phone.contains(q) ||
-            ($0.address ?? "").lowercased().contains(q)
+            ($0.address ?? "").lowercased().contains(q) ||
+            ($0.customerNumber ?? "").lowercased().contains(q)
         }
     }
 
@@ -64,7 +65,7 @@ struct CustomerListView: View {
                     TreeListView(yearGroups: yearGroups)
                 }
             }
-            .searchable(text: $searchText, prompt: "搜索姓名、电话、地址（全库）")
+            .searchable(text: $searchText, prompt: "姓名、电话、地址、编号（模糊搜索）")
             .navigationTitle("客户（\(realCustomers.count) 人）")
         }
     }
@@ -435,6 +436,24 @@ struct CustomerDetailView: View {
                 InfoRow(label: "总营业额", value: "¥\(Int(customer.totalRevenue))")
                 InfoRow(label: "转化次数", value: "\(customer.conversions.count) 次")
                 InfoRow(label: "导入日期", value: customer.importDayDisplay)
+                // 成本开关：直接在详情页切换，实时联动看板 ROI
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("纳入成本计算")
+                        Text(customer.costEnabled ? "该客户 ¥\(Int(customer.lineCost)) 计入成本" : "成本归零，全额计入利润")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { customer.costEnabled },
+                        set: { newVal in
+                            var updated = customer
+                            updated.costEnabled = newVal
+                            store.updateCustomer(updated)
+                        }
+                    ))
+                    .labelsHidden()
+                }
             }
 
             Section {
@@ -483,6 +502,7 @@ struct CustomerEditSheet: View {
     @State private var gender:         String
     @State private var customerNumber: String
     @State private var note:           String
+    @State private var costEnabled:    Bool
     @State private var conversions:    [ConversionRecord]
 
     // 行内编辑成交记录 — 用独立 State 持有编辑中的快照，避免绑定引发重建
@@ -504,6 +524,7 @@ struct CustomerEditSheet: View {
         _gender         = State(initialValue: customer.gender)
         _customerNumber = State(initialValue: customer.customerNumber ?? "")
         _note           = State(initialValue: "")
+        _costEnabled    = State(initialValue: customer.costEnabled)
         _conversions    = State(initialValue: customer.conversions.sorted { $0.date > $1.date })
     }
 
@@ -550,6 +571,16 @@ struct CustomerEditSheet: View {
                 Section(header: Text("备注")) {
                     TextEditor(text: $note)
                         .frame(minHeight: 60)
+                }
+
+                Section(header: Text("成本设置")) {
+                    Toggle(isOn: $costEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("纳入成本计算")
+                            Text(costEnabled ? "成本 ¥\(Int(customer.lineCost)) 将计入看板" : "成本归零，全额算作利润")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                    }
                 }
 
                 // 成交历史明细
@@ -644,6 +675,7 @@ struct CustomerEditSheet: View {
         updated.gender          = gender
         updated.customerNumber  = customerNumber.trimmingCharacters(in: .whitespaces).isEmpty
                                   ? nil : customerNumber.trimmingCharacters(in: .whitespaces)
+        updated.costEnabled     = costEnabled
         updated.conversions     = conversions
         store.updateCustomer(updated)
         dismiss()

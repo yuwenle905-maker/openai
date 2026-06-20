@@ -58,9 +58,9 @@ enum ROIEngine {
         let leadCount = customers.filter { $0.dataType == .fullCustomer }.count
         // 营业额：所有客户（含流水条目）的 ConversionRecord.amount 之和
         let totalRevenue = customers.flatMap { $0.conversions }.reduce(0) { $0 + $1.amount }
-        // 成本：只算完整客户的 lineCost（流水条目不计成本）
+        // 成本：只算完整客户中开启了成本计算的客户的 lineCost
         let totalCost = customers
-            .filter { $0.dataType == .fullCustomer }
+            .filter { $0.dataType == .fullCustomer && $0.costEnabled }
             .reduce(0) { $0 + $1.lineCost }
         // 漏斗：分母只用完整客户线索数，金额统计所有客户
         let stages = buildFunnel(
