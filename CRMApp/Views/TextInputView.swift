@@ -3,17 +3,17 @@
 
 import SwiftUI
 
-// MARK: - 活跃 Sheet 枚举，确保同一时刻只有一个 sheet 存在，彻底防止白屏死锁
-private enum ActiveSheet: Identifiable {
-    case newCustomer(TextParseResult)                        // 场景A：库中无此人，建新档
-    case matchExisting(TextParseResult, [Customer])          // 场景B：库中有同名，让用户选择
-    case batchDuplicate(name: String, results: [TextParseResult])  // 场景C：批内同名合并
+// MARK: - 单一 Sheet 枚举，防止并发白屏
+private enum LedgerSheet: Identifiable {
+    case newCustomer(TextParseResult)
+    case matchExisting(TextParseResult, [Customer])
+    case batchDuplicate(name: String, results: [TextParseResult])
 
     var id: String {
         switch self {
-        case .newCustomer(let r):           return "new_\(r.id)"
-        case .matchExisting(let r, _):      return "match_\(r.id)"
-        case .batchDuplicate(let n, _):     return "batch_\(n)"
+        case .newCustomer(let r):        return "new_\(r.id)"
+        case .matchExisting(let r, _):   return "match_\(r.id)"
+        case .batchDuplicate(let n, _):  return "dup_\(n)"
         }
     }
 }
@@ -29,11 +29,10 @@ struct TextInputView: View {
     @State private var toastMessage:  String = ""
     @FocusState private var editorFocused: Bool
 
-    // 单一 sheet 驱动源，杜绝多 sheet 并发
-    @State private var activeSheet:    ActiveSheet? = nil
-    @State private var pendingQueue:   [TextParseResult] = []
-    @State private var matchedCount:   Int = 0
-    @State private var newBuiltCount:  Int = 0
+    @State private var activeSheet:   LedgerSheet? = nil
+    @State private var pendingQueue:  [TextParseResult] = []
+    @State private var matchedCount:  Int = 0
+    @State private var newBuiltCount: Int = 0
 
     var body: some View {
         NavigationView {
@@ -45,7 +44,7 @@ struct TextInputView: View {
                         Text("流水录入").font(.headline)
                         Text("格式：姓名 状态 金额（此处金额计入营业额）")
                             .font(.caption).foregroundColor(.secondary)
-                        Text("例：张三 新单 4280  /  张三 五次 168000")
+                        Text("支持连续粘贴：严亚 新单 2260 朱忠惠 新单 2680 ...")
                             .font(.caption).foregroundColor(.secondary)
                         Text("库中无此客户时，系统引导你建立新档案")
                             .font(.caption2).foregroundColor(.blue)
@@ -59,7 +58,7 @@ struct TextInputView: View {
                     TextEditor(text: $inputText)
                         .focused($editorFocused)
                         .font(.body.monospaced())
-                        .frame(minHeight: 160, maxHeight: 240)
+                        .frame(minHeight: 160, maxHeight: 280)
                         .padding(8)
                         .background(Color(.secondarySystemGroupedBackground))
                         .cornerRadius(12)
@@ -82,7 +81,7 @@ struct TextInputView: View {
 
                         Button("清空") {
                             editorFocused = false
-                            inputText = ""
+                            inputText    = ""
                             parseResults = []
                             parseErrors  = []
                             showPreview  = false
@@ -95,113 +94,15 @@ struct TextInputView: View {
                     if showPreview {
 
                         if !parseResults.isEmpty {
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text("解析成功 (\(parseResults.count) 条)")
-                                    .font(.caption).foregroundColor(.secondary)
-                                    .padding(.horizontal).padding(.top, 8)
-                                Divider()
-                                ForEach(parseResults) { r in
-                                    let candidates = store.customers.filter {
-                                        $0.name == r.name && $0.dataType == .fullCustomer
-                                    }
-                                    HStack(alignment: .top, spacing: 8) {
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            HStack(spacing: 6) {
-                                                Text(r.name).fontWeight(.semibold)
-                                                if !candidates.isEmpty {
-                                                    Text("已匹配 \(candidates.count) 位")
-                                                        .font(.caption2)
-                                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                                        .background(Color.green.opacity(0.15))
-                                                        .foregroundColor(.green).cornerRadius(4)
-                                                } else {
-                                                    Text("新客户")
-                                                        .font(.caption2)
-                                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                                        .background(Color.blue.opacity(0.12))
-                                                        .foregroundColor(.blue).cornerRadius(4)
-                                                }
-                                            }
-                                            Text(r.rawLine)
-                                                .font(.caption.monospaced())
-                                                .foregroundColor(.secondary).lineLimit(1)
-                                        }
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 3) {
-                                            Text(r.conversionType.rawValue)
-                                                .font(.caption)
-                                                .padding(.horizontal, 8).padding(.vertical, 2)
-                                                .background(conversionColor(r.conversionType).opacity(0.15))
-                                                .foregroundColor(conversionColor(r.conversionType))
-                                                .clipShape(Capsule())
-                                            Text("¥\(Int(r.amount))")
-                                                .fontWeight(.semibold).foregroundColor(.green)
-                                        }
-                                    }
-                                    .padding(.horizontal).padding(.vertical, 8)
-                                    Divider()
-                                }
-                            }
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                            .padding(.horizontal)
+                            previewList
                         }
 
                         if !parseErrors.isEmpty {
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text("解析失败 (\(parseErrors.count) 行)")
-                                    .font(.caption).foregroundColor(.red)
-                                    .padding(.horizontal).padding(.top, 8)
-                                Divider()
-                                ForEach(parseErrors) { e in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("第 \(e.lineNumber) 行：\(e.rawLine)")
-                                            .font(.caption.monospaced())
-                                        Text(e.reason).font(.caption2).foregroundColor(.red)
-                                    }
-                                    .padding(.horizontal).padding(.vertical, 6)
-                                    Divider()
-                                }
-                            }
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                            .padding(.horizontal)
+                            errorList
                         }
 
                         if !parseResults.isEmpty {
-                            // 保存按钮文案根据匹配情况动态变化
-                            let allNew = parseResults.allSatisfy { r in
-                                store.customers.filter { c in
-                                    c.name == r.name && c.dataType == .fullCustomer
-                                }.isEmpty
-                            }
-                            let firstNewName = parseResults.first(where: { r in
-                                store.customers.filter { c in
-                                    c.name == r.name && c.dataType == .fullCustomer
-                                }.isEmpty
-                            })?.name
-
-                            let buttonLabel: String = {
-                                if allNew && parseResults.count == 1, let n = firstNewName {
-                                    return "保存并新建客户：\(n)"
-                                }
-                                return "保存 \(parseResults.count) 条转化记录"
-                            }()
-
-                            Button { startSaveFlow() } label: {
-                                HStack {
-                                    Image(systemName: allNew && parseResults.count == 1
-                                          ? "person.crop.circle.badge.plus"
-                                          : "checkmark.circle.fill")
-                                    Text(buttonLabel).fontWeight(.semibold)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(14)
-                            }
-                            .padding(.horizontal)
+                            saveButton
                         }
                     }
 
@@ -223,64 +124,152 @@ struct TextInputView: View {
                 }
             }
         }
-        // 单一 sheet 驱动，彻底防止多 sheet 并发白屏
         .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .newCustomer(let result):
-                NewCustomerFromLedgerSheet(
-                    result:   result,
-                    onCreate: { customerNumber in
-                        activeSheet = nil
-                        DispatchQueue.main.async {
-                            commitNewCustomer(result: result, customerNumber: customerNumber)
-                            processNextSave()
-                        }
-                    }
-                )
-                .environmentObject(store)
+            sheetContent(sheet)
+        }
+    }
 
-            case .matchExisting(let result, let candidates):
-                LedgerMatchSheet(
-                    result:     result,
-                    candidates: candidates,
-                    onAppend: { target in
-                        activeSheet = nil
-                        DispatchQueue.main.async {
-                            appendToExisting(result: result, target: target)
-                            processNextSave()
-                        }
-                    },
-                    onNewEntry: {
-                        // 转到场景A弹窗，让用户填编号
-                        activeSheet = .newCustomer(result)
-                    }
-                )
-                .environmentObject(store)
+    // MARK: ── 子视图拆分（减轻编译器类型推断负担）
 
-            case .batchDuplicate(let name, let results):
-                BatchDuplicateSheet(
-                    name:     name,
-                    results:  results,
-                    onMerge: {
-                        // 合并：把所有同名记录作为多条 ConversionRecord 写入同一客户
-                        activeSheet = nil
-                        DispatchQueue.main.async {
-                            commitBatchMerge(name: name, results: results)
-                            processNextSave()
+    private var previewList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("解析成功 (\(parseResults.count) 条)")
+                .font(.caption).foregroundColor(.secondary)
+                .padding(.horizontal).padding(.top, 8)
+            Divider()
+            ForEach(parseResults) { r in
+                let hasMatch = !store.customers.filter {
+                    c in c.name == r.name && c.dataType == .fullCustomer
+                }.isEmpty
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(r.name).fontWeight(.semibold)
+                            Text(hasMatch ? "已匹配" : "新客户")
+                                .font(.caption2)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(hasMatch
+                                    ? Color.green.opacity(0.15)
+                                    : Color.blue.opacity(0.12))
+                                .foregroundColor(hasMatch ? .green : .blue)
+                                .cornerRadius(4)
                         }
-                    },
-                    onSeparate: {
-                        // 独立新建：每条各自建档（转回逐条队列处理）
-                        activeSheet = nil
-                        DispatchQueue.main.async {
-                            // 把这些条目重新推入队列头部逐条处理
-                            pendingQueue = results + pendingQueue
-                            processNextSave()
-                        }
+                        Text(r.rawLine)
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary).lineLimit(1)
                     }
-                )
-                .environmentObject(store)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(r.conversionType.rawValue)
+                            .font(.caption)
+                            .padding(.horizontal, 8).padding(.vertical, 2)
+                            .background(conversionColor(r.conversionType).opacity(0.15))
+                            .foregroundColor(conversionColor(r.conversionType))
+                            .clipShape(Capsule())
+                        Text("¥\(Int(r.amount))")
+                            .fontWeight(.semibold).foregroundColor(.green)
+                    }
+                }
+                .padding(.horizontal).padding(.vertical, 8)
+                Divider()
             }
+        }
+        .background(Color(.secondarySystemGroupedBackground))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+
+    private var errorList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("解析失败 (\(parseErrors.count) 行)")
+                .font(.caption).foregroundColor(.red)
+                .padding(.horizontal).padding(.top, 8)
+            Divider()
+            ForEach(parseErrors) { e in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("第 \(e.lineNumber) 行：\(e.rawLine)")
+                        .font(.caption.monospaced())
+                    Text(e.reason).font(.caption2).foregroundColor(.red)
+                }
+                .padding(.horizontal).padding(.vertical, 6)
+                Divider()
+            }
+        }
+        .background(Color(.secondarySystemGroupedBackground))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+
+    private var saveButton: some View {
+        Button { startSaveFlow() } label: {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                Text("批量保存 \(parseResults.count) 条记录")
+                    .fontWeight(.semibold)
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(Color.blue)
+            .foregroundColor(.white)
+            .cornerRadius(14)
+        }
+        .padding(.horizontal)
+    }
+
+    // MARK: ── Sheet 内容
+    @ViewBuilder
+    private func sheetContent(_ sheet: LedgerSheet) -> some View {
+        switch sheet {
+        case .newCustomer(let result):
+            NewCustomerFromLedgerSheet(
+                result: result,
+                onCreate: { num in
+                    activeSheet = nil
+                    DispatchQueue.main.async {
+                        commitNewCustomer(result: result, customerNumber: num)
+                        processNextSave()
+                    }
+                }
+            )
+            .environmentObject(store)
+
+        case .matchExisting(let result, let candidates):
+            LedgerMatchSheet(
+                result:     result,
+                candidates: candidates,
+                onAppend: { target in
+                    activeSheet = nil
+                    DispatchQueue.main.async {
+                        appendToExisting(result: result, target: target)
+                        processNextSave()
+                    }
+                },
+                onNewEntry: {
+                    activeSheet = .newCustomer(result)
+                }
+            )
+            .environmentObject(store)
+
+        case .batchDuplicate(let name, let results):
+            BatchDuplicateSheet(
+                name:    name,
+                results: results,
+                onMerge: {
+                    activeSheet = nil
+                    DispatchQueue.main.async {
+                        commitBatchMerge(name: name, results: results)
+                        processNextSave()
+                    }
+                },
+                onSeparate: {
+                    activeSheet = nil
+                    DispatchQueue.main.async {
+                        pendingQueue = results + pendingQueue
+                        processNextSave()
+                    }
+                }
+            )
+            .environmentObject(store)
         }
     }
 
@@ -290,15 +279,13 @@ struct TextInputView: View {
         matchedCount    = 0
         newBuiltCount   = 0
 
-        // 批内同名检测：先把本批 parseResults 按姓名分组
-        // 若某个姓名出现 2+ 次，先弹合并确认，再处理剩余
+        // 批内同名分组检测
         let grouped = Dictionary(grouping: parseResults) { $0.name }
-        let batchDuplicates = grouped.filter { $0.value.count > 1 }
+        let batchDups = grouped.filter { $0.value.count > 1 }
 
-        if let first = batchDuplicates.first {
-            // 从 pendingQueue 剔除这批同名条目，稍后根据用户选择再处理
-            let dupName = first.key
-            let dupResults = first.value
+        if let firstDup = batchDups.first {
+            let dupName    = firstDup.key
+            let dupResults = firstDup.value
             pendingQueue = parseResults.filter { $0.name != dupName }
             activeSheet  = .batchDuplicate(name: dupName, results: dupResults)
         } else {
@@ -313,79 +300,59 @@ struct TextInputView: View {
             return
         }
         let result = pendingQueue.removeFirst()
-        // 防御性过滤：确保结果非空且不引发 nil 解包
         let candidates = store.customers.filter {
-            !$0.name.isEmpty &&
-            $0.name == result.name &&
-            $0.dataType == .fullCustomer
+            !$0.name.isEmpty && $0.name == result.name && $0.dataType == .fullCustomer
         }
         if candidates.isEmpty {
-            // 场景A：无匹配 → 弹新建档案面板
             activeSheet = .newCustomer(result)
         } else {
-            // 场景B：有匹配 → 弹绑定确认面板
             activeSheet = .matchExisting(result, candidates)
         }
     }
 
     private func commitNewCustomer(result: TextParseResult, customerNumber: String?) {
-        let record = ConversionRecord(
-            type:   result.conversionType,
-            amount: result.amount,
-            date:   Date()
-        )
+        let record = ConversionRecord(type: result.conversionType, amount: result.amount, date: Date())
         let numStr = customerNumber?.trimmingCharacters(in: .whitespaces)
-        let newCustomer = Customer(
+        let c = Customer(
             name:           result.name,
             phone:          "待补全_\(UUID().uuidString.prefix(8))",
             customerNumber: (numStr?.isEmpty == false) ? numStr : nil,
+            costEnabled:    false,   // 流水录入不计成本
             lineCost:       store.settings.leadUnitPrice,
             dataType:       .fullCustomer,
             importDate:     Date(),
             conversions:    [record]
         )
-        store.customers.append(newCustomer)
+        store.customers.append(c)
         store.save()
         newBuiltCount += 1
     }
 
     private func appendToExisting(result: TextParseResult, target: Customer) {
         guard let idx = store.customers.firstIndex(where: { $0.id == target.id }) else { return }
-        let record = ConversionRecord(
-            type:   result.conversionType,
-            amount: result.amount,
-            date:   Date()
-        )
+        let record = ConversionRecord(type: result.conversionType, amount: result.amount, date: Date())
         store.customers[idx].conversions.append(record)
         store.save()
         matchedCount += 1
     }
 
-    // 批内同名合并：将多条同名记录作为多笔 ConversionRecord 写入同一客户档案
     private func commitBatchMerge(name: String, results: [TextParseResult]) {
-        // 先检查库中是否已有同名客户
-        let existingIdx = store.customers.firstIndex(where: {
-            $0.name == name && $0.dataType == .fullCustomer
-        })
-        let records = results.map { r in
-            ConversionRecord(type: r.conversionType, amount: r.amount, date: Date())
-        }
-        if let idx = existingIdx {
-            // 追加到已有客户
+        let records = results.map { ConversionRecord(type: $0.conversionType, amount: $0.amount, date: Date()) }
+        if let idx = store.customers.firstIndex(where: { $0.name == name && $0.dataType == .fullCustomer }) {
             store.customers[idx].conversions.append(contentsOf: records)
             store.save()
             matchedCount += results.count
         } else {
-            // 新建一个客户，携带所有记录
-            let newCustomer = Customer(
+            let c = Customer(
                 name:        name,
                 phone:       "待补全_\(UUID().uuidString.prefix(8))",
+                costEnabled: false,
                 lineCost:    store.settings.leadUnitPrice,
                 dataType:    .fullCustomer,
                 importDate:  Date(),
                 conversions: records
             )
-            store.customers.append(newCustomer)
+            store.customers.append(c)
             store.save()
             newBuiltCount += 1
         }
@@ -471,7 +438,7 @@ struct NewCustomerFromLedgerSheet: View {
                             Text("正在为新客户「\(result.name)」建立档案")
                                 .font(.subheadline).fontWeight(.semibold)
                         }
-                        Text("系统未找到同名已有客户。请填写客户编号，或点击「跳过并直接创建」留空处理。")
+                        Text("未找到同名已有客户，请填写客户编号（可跳过留空）。")
                             .font(.caption).foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -490,13 +457,10 @@ struct NewCustomerFromLedgerSheet: View {
                     } label: {
                         HStack {
                             Spacer()
-                            HStack(spacing: 6) {
-                                Image(systemName: "person.crop.circle.badge.plus")
-                                let num = customerNumber.trimmingCharacters(in: .whitespaces)
-                                Text(num.isEmpty ? "直接创建（编号留空）" : "确定创建（编号：\(num)）")
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.white)
+                            let num = customerNumber.trimmingCharacters(in: .whitespaces)
+                            Label(num.isEmpty ? "直接创建（编号留空）" : "确定创建（编号：\(num)）",
+                                  systemImage: "person.crop.circle.badge.plus")
+                                .foregroundColor(.white).fontWeight(.semibold)
                             Spacer()
                         }
                         .padding()
@@ -587,9 +551,6 @@ struct LedgerMatchSheet: View {
                                         if let w = candidate.weight {
                                             Text("\(Int(w))kg").font(.caption2).foregroundColor(.secondary)
                                         }
-                                        if candidate.gender != "未知" {
-                                            Text(candidate.gender).font(.caption2).foregroundColor(.secondary)
-                                        }
                                         Text("转化\(candidate.conversions.count)次")
                                             .font(.caption2).foregroundColor(.secondary)
                                     }
@@ -621,11 +582,9 @@ struct LedgerMatchSheet: View {
                                         Text("绑定到该客户")
                                     }
                                     .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 9)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 9)
                                     .background(Color(.secondarySystemGroupedBackground))
-                                    .foregroundColor(.blue)
-                                    .cornerRadius(10)
+                                    .foregroundColor(.blue).cornerRadius(10)
                                     .overlay(RoundedRectangle(cornerRadius: 10)
                                         .stroke(Color.blue.opacity(0.4), lineWidth: 1.5))
                                 }
@@ -637,11 +596,9 @@ struct LedgerMatchSheet: View {
                                         Text("同名新客户")
                                     }
                                     .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 9)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 9)
                                     .background(Color(.secondarySystemGroupedBackground))
-                                    .foregroundColor(.orange)
-                                    .cornerRadius(10)
+                                    .foregroundColor(.orange).cornerRadius(10)
                                     .overlay(RoundedRectangle(cornerRadius: 10)
                                         .stroke(Color.orange.opacity(0.4), lineWidth: 1.5))
                                 }
@@ -675,7 +632,7 @@ struct LedgerMatchSheet: View {
     }
 }
 
-// MARK: - 场景C：批内同名合并确认面板
+// MARK: - 场景C：批内同名合并面板
 struct BatchDuplicateSheet: View {
 
     @Environment(\.dismiss) var dismiss
@@ -703,8 +660,7 @@ struct BatchDuplicateSheet: View {
                 Section(header: Text("本批次「\(name)」的所有记录")) {
                     ForEach(results) { r in
                         HStack {
-                            Text(r.conversionType.rawValue)
-                                .font(.subheadline).fontWeight(.semibold)
+                            Text(r.conversionType.rawValue).font(.subheadline).fontWeight(.semibold)
                             Spacer()
                             Text("¥\(Int(r.amount))").foregroundColor(.green).fontWeight(.bold)
                         }
@@ -713,16 +669,11 @@ struct BatchDuplicateSheet: View {
                 }
 
                 Section {
-                    // 合并按钮
                     Button(action: onMerge) {
                         HStack {
                             Spacer()
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.triangle.merge")
-                                Text("合并为同一客户的 \(results.count) 次订购")
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.white)
+                            Label("合并为同一客户的 \(results.count) 次订购", systemImage: "arrow.triangle.merge")
+                                .foregroundColor(.white).fontWeight(.semibold)
                             Spacer()
                         }
                         .padding()
@@ -733,23 +684,17 @@ struct BatchDuplicateSheet: View {
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 4, trailing: 16))
                     .listRowBackground(Color.clear)
 
-                    // 独立新建按钮
                     Button(action: onSeparate) {
                         HStack {
                             Spacer()
-                            HStack(spacing: 6) {
-                                Image(systemName: "person.badge.plus")
-                                Text("各自独立新建（\(results.count) 个同名新客户）")
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.orange)
+                            Label("各自独立新建（\(results.count) 个同名新客户）", systemImage: "person.badge.plus")
+                                .foregroundColor(.orange).fontWeight(.semibold)
                             Spacer()
                         }
                         .padding()
                         .background(Color.orange.opacity(0.1))
                         .cornerRadius(12)
-                        .overlay(RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.orange.opacity(0.3), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.3), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 6, trailing: 16))

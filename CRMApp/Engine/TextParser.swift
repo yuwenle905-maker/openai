@@ -1,6 +1,8 @@
 // MARK: - TextParser.swift
 // 手动文本批量录入解析引擎
-// 新策略：不依赖空格，从右向左提取「金额→状态关键词→剩余为姓名」
+// v2：支持两种输入格式
+//   A. 每行一条（换行分隔）：张三新单4280
+//   B. 连续平铺（空格分隔）：严亚 新单 2260 朱忠惠 新单 2680 ...
 
 import Foundation
 
@@ -30,7 +32,7 @@ struct TextParseError: Identifiable {
 // MARK: 主解析器
 enum TextParser {
 
-    // 状态关键词表（从高往低匹配，防止数字误匹配）
+    // 状态关键词表
     private static let conversionKeywords: [(keywords: [String], type: ConversionType)] = [
         (["八次", "8次", "第八"],                        .eighth),
         (["七次", "7次", "第七"],                        .seventh),
@@ -42,14 +44,26 @@ enum TextParser {
         (["新单", "首单", "一次", "1次", "第一", "新"],  .newOrder),
     ]
 
-    // 末尾金额正则：匹配行末的数字（含小数）
+    // 全局循环正则：匹配 [姓名] [状态词] [金额] 三元组
+    // 姓名：至少1个非空白非纯数字字符
+    // 状态：固定关键词
+    // 金额：纯数字（含小数/逗号）
+    private static let triplePattern = try! NSRegularExpression(
+        pattern: #"([^\s\d,，。、\n\r]{1,10}(?:女士|先生|小姐)?)\s*(新单|首单|二次|三次|四次|五次|六次|七次|八次|复购|一次)\s*(\d[\d,，.]*)"#,
+        options: []
+    )
+
+    // 末尾金额正则（单行模式备用）
     private static let trailingAmountPattern = try! NSRegularExpression(
         pattern: #"(\d+(?:[.,]\d+)?)\s*[元￥]?\s*$"#
     )
 
-    // MARK: 批量解析
+    // MARK: 批量解析入口
+    // 自动检测输入格式：
+    //   - 若包含多个换行 → 按行解析（原逻辑）
+    //   - 若为单行或少换行但包含多组三元组 → 全局正则扫描
     static func parse(_ text: String) -> (results: [TextParseResult], errors: [TextParseError]) {
-        // 预处理：全角/特殊空格/Tab/中文标点统一为半角空格
+        // 标准化空白
         let normalized = text
             .replacingOccurrences(of: "\u{3000}", with: " ")
             .replacingOccurrences(of: "\u{00A0}", with: " ")
@@ -59,6 +73,47 @@ enum TextParser {
             .replacingOccurrences(of: "、",         with: " ")
             .replacingOccurrences(of: "　",         with: " ")
 
+        // 先尝试全局正则扫描（适合平铺格式）
+        let globalResults = parseByGlobalRegex(normalized)
+
+        // 如果全局正则匹配到 2 条以上，直接用（说明是平铺格式）
+        if globalResults.count >= 2 {
+            return (globalResults, [])
+        }
+
+        // 否则按行解析（单行或多行标准格式）
+        return parseByLines(normalized)
+    }
+
+    // MARK: 全局正则扫描（平铺格式核心）
+    static func parseByGlobalRegex(_ text: String) -> [TextParseResult] {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let matches = triplePattern.matches(in: text, range: fullRange)
+
+        return matches.compactMap { m -> TextParseResult? in
+            guard m.numberOfRanges == 4,
+                  let nameRange   = Range(m.range(at: 1), in: text),
+                  let statusRange = Range(m.range(at: 2), in: text),
+                  let amountRange = Range(m.range(at: 3), in: text)
+            else { return nil }
+
+            let name      = String(text[nameRange]).trimmingCharacters(in: .whitespaces)
+            let statusStr = String(text[statusRange])
+            let amtStr    = String(text[amountRange])
+                .replacingOccurrences(of: ",", with: "")
+                .replacingOccurrences(of: "，", with: "")
+            guard !name.isEmpty, let amount = Double(amtStr) else { return nil }
+
+            let convType = resolveConversionType(statusStr)
+            let rawLine  = "\(name) \(statusStr) \(amtStr)"
+            return TextParseResult(rawLine: rawLine, name: name,
+                                   conversionType: convType, amount: amount)
+        }
+    }
+
+    // MARK: 按行解析（原逻辑，保留兼容性）
+    private static func parseByLines(_ normalized: String) -> (results: [TextParseResult], errors: [TextParseError]) {
         let lines = normalized
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -83,14 +138,11 @@ enum TextParser {
         return (results, errors)
     }
 
-    // MARK: 单行解析（不依赖空格）
+    // MARK: 单行解析
     static func parseLine(_ raw: String) -> Result<TextParseResult, ParseError> {
         let s = raw.trimmingCharacters(in: .whitespaces)
-        guard !s.isEmpty else {
-            return .failure(.formatMismatch("空行"))
-        }
+        guard !s.isEmpty else { return .failure(.formatMismatch("空行")) }
 
-        // 1. 从末尾提取金额
         let nsRange = NSRange(s.startIndex..., in: s)
         guard let amountMatch = trailingAmountPattern.firstMatch(in: s, range: nsRange),
               let amtRange = Range(amountMatch.range(at: 1), in: s) else {
@@ -101,14 +153,11 @@ enum TextParser {
             return .failure(.invalidAmount("金额解析失败：\(amountStr)"))
         }
 
-        // 去掉末尾金额部分，得到前缀
         let prefixEnd = amountMatch.range.location == NSNotFound
             ? s.endIndex
             : s.index(s.startIndex, offsetBy: amountMatch.range.location)
-        let prefix = String(s[s.startIndex..<prefixEnd])
-            .trimmingCharacters(in: .whitespaces)
+        let prefix = String(s[s.startIndex..<prefixEnd]).trimmingCharacters(in: .whitespaces)
 
-        // 2. 从前缀中识别状态关键词
         var convType: ConversionType = .unknown
         var nameCandidate = prefix
 
@@ -116,7 +165,6 @@ enum TextParser {
             for kw in entry.keywords {
                 if prefix.contains(kw) {
                     convType = entry.type
-                    // 去掉关键词，剩余为姓名
                     nameCandidate = prefix
                         .replacingOccurrences(of: kw, with: "")
                         .trimmingCharacters(in: .whitespaces)
@@ -126,17 +174,20 @@ enum TextParser {
             if convType != .unknown { break }
         }
 
-        // 3. 姓名为空检查
         let name = nameCandidate.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
             return .failure(.formatMismatch("解析出的姓名为空，请检查格式。示例：张三新单4280"))
         }
 
-        return .success(TextParseResult(
-            rawLine:        raw,
-            name:           name,
-            conversionType: convType,
-            amount:         amount
-        ))
+        return .success(TextParseResult(rawLine: raw, name: name,
+                                        conversionType: convType, amount: amount))
+    }
+
+    // MARK: 辅助：状态词 → ConversionType
+    private static func resolveConversionType(_ s: String) -> ConversionType {
+        for entry in conversionKeywords {
+            if entry.keywords.contains(s) { return entry.type }
+        }
+        return .newOrder
     }
 }

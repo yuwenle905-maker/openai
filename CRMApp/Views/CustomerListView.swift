@@ -391,26 +391,31 @@ struct CustomerDetailView: View {
 
     @State private var showEditSheet = false
 
+    // 始终从 store 实时读取最新数据，确保 Toggle 等操作立刻反映
+    private var current: Customer {
+        store.customers.first { $0.id == customer.id } ?? customer
+    }
+
     var body: some View {
         List {
             Section(header: Text("基础资料")) {
-                InfoRow(label: "姓名",  value: customer.name)
-                InfoRow(label: "电话",  value: customer.phone)
-                if let num = customer.customerNumber {
+                InfoRow(label: "姓名",  value: current.name)
+                InfoRow(label: "电话",  value: current.phone)
+                if let num = current.customerNumber {
                     InfoRow(label: "编号", value: "编号 \(num)")
                 }
-                InfoRow(label: "地址",  value: customer.address ?? "—")
-                InfoRow(label: "性别",  value: customer.gender)
-                InfoRow(label: "年龄",  value: customer.age.map    { "\($0) 岁"  } ?? "—")
-                InfoRow(label: "身高",  value: customer.height.map { "\($0) cm"  } ?? "—")
-                InfoRow(label: "体重",  value: customer.weight.map { "\($0) kg"  } ?? "—")
+                InfoRow(label: "地址",  value: current.address ?? "—")
+                InfoRow(label: "性别",  value: current.gender)
+                InfoRow(label: "年龄",  value: current.age.map    { "\($0) 岁"  } ?? "—")
+                InfoRow(label: "身高",  value: current.height.map { "\($0) cm"  } ?? "—")
+                InfoRow(label: "体重",  value: current.weight.map { "\($0) kg"  } ?? "—")
             }
 
             Section(header: Text("消费时间轴")) {
-                if customer.conversions.isEmpty {
+                if current.conversions.isEmpty {
                     Text("暂无消费记录").foregroundColor(.secondary)
                 } else {
-                    ForEach(customer.conversions.sorted { $0.date > $1.date }) { record in
+                    ForEach(current.conversions.sorted { $0.date > $1.date }) { record in
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(record.type.rawValue).fontWeight(.semibold)
@@ -430,26 +435,28 @@ struct CustomerDetailView: View {
             }
 
             Section(header: Text("汇总")) {
-                if let lead = customer.leadAmount {
+                if let lead = current.leadAmount {
                     InfoRow(label: "线索金额", value: "¥\(Int(lead))（仅记录，不计营业额）")
                 }
-                InfoRow(label: "总营业额", value: "¥\(Int(customer.totalRevenue))")
-                InfoRow(label: "转化次数", value: "\(customer.conversions.count) 次")
-                InfoRow(label: "导入日期", value: customer.importDayDisplay)
-                // 成本开关：直接在详情页切换，实时联动看板 ROI
+                InfoRow(label: "总营业额", value: "¥\(Int(current.totalRevenue))")
+                InfoRow(label: "转化次数", value: "\(current.conversions.count) 次")
+                InfoRow(label: "导入日期", value: current.importDayDisplay)
+                // 成本开关：写入 store 后 current 计算属性自动刷新，Toggle 实时响应
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("纳入成本计算")
-                        Text(customer.costEnabled ? "该客户 ¥\(Int(customer.lineCost)) 计入成本" : "成本归零，全额计入利润")
+                        Text(current.costEnabled
+                             ? "该客户 ¥\(Int(current.lineCost)) 计入成本"
+                             : "成本归零，全额计入利润")
                             .font(.caption).foregroundColor(.secondary)
                     }
                     Spacer()
                     Toggle("", isOn: Binding(
-                        get: { customer.costEnabled },
+                        get: { current.costEnabled },
                         set: { newVal in
-                            var updated = customer
+                            var updated = current
                             updated.costEnabled = newVal
-                            store.updateCustomer(updated)
+                            store.updateCustomer(updated)  // 触发 @Published 刷新全局
                         }
                     ))
                     .labelsHidden()
@@ -458,7 +465,7 @@ struct CustomerDetailView: View {
 
             Section {
                 Button(role: .destructive) {
-                    store.customers.removeAll { $0.id == customer.id }
+                    store.customers.removeAll { $0.id == current.id }
                     store.save()
                     dismiss()
                 } label: {
@@ -471,7 +478,7 @@ struct CustomerDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(customer.name)
+        .navigationTitle(current.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -479,7 +486,7 @@ struct CustomerDetailView: View {
             }
         }
         .sheet(isPresented: $showEditSheet) {
-            CustomerEditSheet(customer: customer)
+            CustomerEditSheet(customer: current)
                 .environmentObject(store)
         }
     }
