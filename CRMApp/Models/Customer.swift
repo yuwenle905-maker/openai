@@ -62,6 +62,7 @@ struct Customer: Identifiable, Codable, Equatable {
     var height: Double?
     var weight: Double?
     var gender: String = "未知"
+    var customerNumber: String?   // 手动录入的客户编号，系统不自动生成
 
     // 线索金额（智能导入时提取，仅用于画像统计，不计入营业额）
     var leadAmount: Double?
@@ -101,30 +102,32 @@ struct Customer: Identifiable, Codable, Equatable {
     }
 
     init(name: String, phone: String,
-         address: String?    = nil,
-         age: Int?           = nil,
-         height: Double?     = nil,
-         weight: Double?     = nil,
-         gender: String      = "未知",
-         leadAmount: Double? = nil,
-         lineCost: Double    = 1200,
+         address: String?        = nil,
+         age: Int?               = nil,
+         height: Double?         = nil,
+         weight: Double?         = nil,
+         gender: String          = "未知",
+         customerNumber: String? = nil,
+         leadAmount: Double?     = nil,
+         lineCost: Double        = 1200,
          dataType: CustomerDataType = .fullCustomer,
-         importBatchID: UUID? = nil,
-         importDate: Date    = Date(),
+         importBatchID: UUID?    = nil,
+         importDate: Date        = Date(),
          conversions: [ConversionRecord] = []) {
-        self.name          = name
-        self.phone         = phone
-        self.address       = address
-        self.age           = age
-        self.height        = height
-        self.weight        = weight
-        self.gender        = gender
-        self.leadAmount    = leadAmount
-        self.lineCost      = lineCost
-        self.dataType      = dataType
-        self.importBatchID = importBatchID
-        self.importDate    = importDate
-        self.conversions   = conversions
+        self.name           = name
+        self.phone          = phone
+        self.address        = address
+        self.age            = age
+        self.height         = height
+        self.weight         = weight
+        self.gender         = gender
+        self.customerNumber = customerNumber
+        self.leadAmount     = leadAmount
+        self.lineCost       = lineCost
+        self.dataType       = dataType
+        self.importBatchID  = importBatchID
+        self.importDate     = importDate
+        self.conversions    = conversions
     }
 }
 

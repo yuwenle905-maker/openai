@@ -335,6 +335,9 @@ struct CustomerRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(customer.name).fontWeight(.semibold)
+                    // 编号强制展示，无编号显示"未录入编号"
+                    Text("（\(customer.customerNumber.map { "编号 \($0)" } ?? "未录入编号")）")
+                        .font(.caption2).foregroundColor(.secondary)
                     if customer.dataType == .ledgerEntry {
                         Text("流水").font(.caption2)
                             .padding(.horizontal, 4).padding(.vertical, 1)
@@ -392,6 +395,9 @@ struct CustomerDetailView: View {
             Section(header: Text("基础资料")) {
                 InfoRow(label: "姓名",  value: customer.name)
                 InfoRow(label: "电话",  value: customer.phone)
+                if let num = customer.customerNumber {
+                    InfoRow(label: "编号", value: "编号 \(num)")
+                }
                 InfoRow(label: "地址",  value: customer.address ?? "—")
                 InfoRow(label: "性别",  value: customer.gender)
                 InfoRow(label: "年龄",  value: customer.age.map    { "\($0) 岁"  } ?? "—")
@@ -468,27 +474,37 @@ struct CustomerEditSheet: View {
 
     let customer: Customer
 
-    @State private var name:    String
-    @State private var phone:   String
-    @State private var address: String
-    @State private var ageStr:    String
-    @State private var heightStr: String
-    @State private var weightStr: String
-    @State private var gender:  String
-    @State private var note:    String
+    @State private var name:           String
+    @State private var phone:          String
+    @State private var address:        String
+    @State private var ageStr:         String
+    @State private var heightStr:      String
+    @State private var weightStr:      String
+    @State private var gender:         String
+    @State private var customerNumber: String
+    @State private var note:           String
+    @State private var conversions:    [ConversionRecord]
+
+    // 行内编辑成交记录
+    @State private var editingRecord:  ConversionRecord? = nil
+    @State private var editAmountStr:  String = ""
+    @State private var editDate:       Date   = Date()
+    @State private var showEditRecord  = false
 
     private let genderOptions = ["未知", "女", "男"]
 
     init(customer: Customer) {
         self.customer = customer
-        _name      = State(initialValue: customer.name)
-        _phone     = State(initialValue: customer.phone)
-        _address   = State(initialValue: customer.address ?? "")
-        _ageStr    = State(initialValue: customer.age.map    { String($0) } ?? "")
-        _heightStr = State(initialValue: customer.height.map { String(Int($0)) } ?? "")
-        _weightStr = State(initialValue: customer.weight.map { String(Int($0)) } ?? "")
-        _gender    = State(initialValue: customer.gender)
-        _note      = State(initialValue: "")
+        _name           = State(initialValue: customer.name)
+        _phone          = State(initialValue: customer.phone)
+        _address        = State(initialValue: customer.address ?? "")
+        _ageStr         = State(initialValue: customer.age.map    { String($0) } ?? "")
+        _heightStr      = State(initialValue: customer.height.map { String(Int($0)) } ?? "")
+        _weightStr      = State(initialValue: customer.weight.map { String(Int($0)) } ?? "")
+        _gender         = State(initialValue: customer.gender)
+        _customerNumber = State(initialValue: customer.customerNumber ?? "")
+        _note           = State(initialValue: "")
+        _conversions    = State(initialValue: customer.conversions.sorted { $0.date > $1.date })
     }
 
     var body: some View {
@@ -506,6 +522,10 @@ struct CustomerEditSheet: View {
                     HStack {
                         Text("地址").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
                         TextField("收货地址", text: $address)
+                    }
+                    HStack {
+                        Text("编号").frame(width: 44, alignment: .leading).foregroundColor(.secondary)
+                        TextField("客户编号（如 8888）", text: $customerNumber)
                     }
                 }
 
@@ -529,7 +549,46 @@ struct CustomerEditSheet: View {
 
                 Section(header: Text("备注")) {
                     TextEditor(text: $note)
-                        .frame(minHeight: 72)
+                        .frame(minHeight: 60)
+                }
+
+                // 成交历史明细
+                Section(header: HStack {
+                    Text("成交历史明细")
+                    Spacer()
+                    Text("共 \(conversions.count) 笔 · ¥\(Int(conversions.reduce(0) { $0 + $1.amount }))")
+                        .font(.caption).foregroundColor(.secondary)
+                }) {
+                    if conversions.isEmpty {
+                        Text("暂无成交记录").foregroundColor(.secondary).font(.caption)
+                    } else {
+                        ForEach(conversions) { record in
+                            Button {
+                                editingRecord = record
+                                editAmountStr = String(Int(record.amount))
+                                editDate      = record.date
+                                showEditRecord = true
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(record.type.rawValue).font(.subheadline).fontWeight(.semibold)
+                                            .foregroundColor(.primary)
+                                        Text(record.date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2).foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Text("¥\(Int(record.amount))")
+                                        .fontWeight(.bold).foregroundColor(.green)
+                                    Image(systemName: "pencil.circle")
+                                        .foregroundColor(.blue).font(.caption)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete { indexSet in
+                            conversions.remove(atOffsets: indexSet)
+                        }
+                    }
                 }
             }
             .navigationTitle("编辑客户")
@@ -545,20 +604,79 @@ struct CustomerEditSheet: View {
                     Button("取消", role: .cancel) { dismiss() }
                 }
             }
+            .sheet(isPresented: $showEditRecord) {
+                if let record = editingRecord {
+                    RecordEditSheet(
+                        record:       record,
+                        amountStr:    $editAmountStr,
+                        date:         $editDate,
+                        onSave: {
+                            if let idx = conversions.firstIndex(where: { $0.id == record.id }) {
+                                conversions[idx].amount = Double(editAmountStr) ?? record.amount
+                                conversions[idx].date   = editDate
+                            }
+                            showEditRecord = false
+                        },
+                        onCancel: { showEditRecord = false }
+                    )
+                }
+            }
         }
     }
 
     private func save() {
-        var updated         = customer
-        updated.name        = name.trimmingCharacters(in: .whitespaces)
-        updated.phone       = phone.trimmingCharacters(in: .whitespaces)
-        updated.address     = address.trimmingCharacters(in: .whitespaces).isEmpty
-                              ? nil : address.trimmingCharacters(in: .whitespaces)
-        updated.age         = Int(ageStr.trimmingCharacters(in: .whitespaces))
-        updated.height      = Double(heightStr.trimmingCharacters(in: .whitespaces))
-        updated.weight      = Double(weightStr.trimmingCharacters(in: .whitespaces))
-        updated.gender      = gender
+        var updated             = customer
+        updated.name            = name.trimmingCharacters(in: .whitespaces)
+        updated.phone           = phone.trimmingCharacters(in: .whitespaces)
+        updated.address         = address.trimmingCharacters(in: .whitespaces).isEmpty
+                                  ? nil : address.trimmingCharacters(in: .whitespaces)
+        updated.age             = Int(ageStr.trimmingCharacters(in: .whitespaces))
+        updated.height          = Double(heightStr.trimmingCharacters(in: .whitespaces))
+        updated.weight          = Double(weightStr.trimmingCharacters(in: .whitespaces))
+        updated.gender          = gender
+        updated.customerNumber  = customerNumber.trimmingCharacters(in: .whitespaces).isEmpty
+                                  ? nil : customerNumber.trimmingCharacters(in: .whitespaces)
+        updated.conversions     = conversions
         store.updateCustomer(updated)
         dismiss()
+    }
+}
+
+// MARK: - 单笔成交记录行内编辑 Sheet
+struct RecordEditSheet: View {
+    let record:    ConversionRecord
+    @Binding var amountStr: String
+    @Binding var date:      Date
+    let onSave:   () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("修改成交记录")) {
+                    HStack {
+                        Text("类型").foregroundColor(.secondary)
+                        Spacer()
+                        Text(record.type.rawValue).foregroundColor(.primary)
+                    }
+                    HStack {
+                        Text("金额").foregroundColor(.secondary)
+                        TextField("成交金额", text: $amountStr).keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    DatePicker("时间", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                }
+            }
+            .navigationTitle("编辑成交记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: onSave).font(.headline)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", role: .cancel, action: onCancel)
+                }
+            }
+        }
     }
 }

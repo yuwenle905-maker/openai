@@ -58,7 +58,9 @@ struct DashboardView: View {
                     .padding(.horizontal)
 
                     // 漏斗
-                    FunnelCard(stages: monthSummary.funnelStages, expanded: $funnelExpanded)
+                    FunnelCard(stages: monthSummary.funnelStages,
+                               allCustomers: monthAllCustomers,
+                               expanded: $funnelExpanded)
                         .padding(.horizontal)
 
                     // 地域分布（可点击下钻）
@@ -258,7 +260,8 @@ struct KPICard: View {
 
 // MARK: - 漏斗卡片
 struct FunnelCard: View {
-    let stages: [FunnelStage]
+    let stages:       [FunnelStage]
+    let allCustomers: [Customer]
     @Binding var expanded: Bool
 
     var body: some View {
@@ -279,7 +282,12 @@ struct FunnelCard: View {
                 Divider()
                 VStack(spacing: 0) {
                     ForEach(stages) { stage in
-                        FunnelRow(stage: stage)
+                        NavigationLink(destination:
+                            FunnelStageCustomerList(stage: stage, allCustomers: allCustomers)
+                        ) {
+                            FunnelRow(stage: stage)
+                        }
+                        .buttonStyle(.plain)
                         if stage.id != stages.last?.id { Divider().padding(.leading) }
                     }
                 }
@@ -289,6 +297,57 @@ struct FunnelCard: View {
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+    }
+}
+
+// MARK: - 漏斗阶段客户列表
+struct FunnelStageCustomerList: View {
+
+    let stage:        FunnelStage
+    let allCustomers: [Customer]
+
+    private var stageCustomers: [Customer] {
+        allCustomers.filter { c in
+            c.conversions.contains { $0.type.rawValue == stage.label }
+        }
+    }
+
+    var body: some View {
+        List {
+            Section(header: Text("\(stage.label) · \(stageCustomers.count) 人 · ¥\(Int(stage.totalAmount))")) {
+                if stageCustomers.isEmpty {
+                    Text("暂无客户").foregroundColor(.secondary)
+                } else {
+                    ForEach(stageCustomers) { customer in
+                        NavigationLink(destination: CustomerDetailView(customer: customer)) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    // 姓名 + 编号（必须展示，无编号显示"未录入编号"）
+                                    HStack(spacing: 4) {
+                                        Text(customer.name).fontWeight(.semibold)
+                                        Text("（\(customer.customerNumber.map { "编号 \($0)" } ?? "未录入编号")）")
+                                            .font(.caption).foregroundColor(.secondary)
+                                    }
+                                    Text(customer.phone)
+                                        .font(.caption).foregroundColor(.gray)
+                                }
+                                Spacer()
+                                // 该阶段成交金额
+                                let amt = customer.conversions
+                                    .filter { $0.type.rawValue == stage.label }
+                                    .reduce(0) { $0 + $1.amount }
+                                Text("¥\(Int(amt))")
+                                    .fontWeight(.bold).foregroundColor(.green)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(stage.label)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -308,6 +367,8 @@ struct FunnelRow: View {
                 Text("\(stage.count)/\(stage.denominator)")
                     .font(.caption2).foregroundColor(.secondary)
             }
+            Image(systemName: "chevron.right")
+                .font(.caption2).foregroundColor(.secondary)
         }
         .padding(.horizontal).padding(.vertical, 10)
     }
