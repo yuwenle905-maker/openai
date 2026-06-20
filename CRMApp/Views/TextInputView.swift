@@ -471,6 +471,7 @@ struct NewCustomerFromLedgerSheet: View {
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     .listRowBackground(Color.clear)
                 }
+            }
             .listStyle(.insetGrouped)
             .navigationTitle("新建客户档案")
             .navigationBarTitleDisplayMode(.inline)
