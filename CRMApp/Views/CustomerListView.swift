@@ -349,10 +349,15 @@ struct CustomerRow: View {
                             .cornerRadius(3)
                     }
                 }
-                Text(customer.phone).font(.caption).foregroundColor(.secondary)
-                if let addr = customer.address, !addr.isEmpty {
-                    Text(String(addr.prefix(15)))
-                        .font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                // 手机号 + 地址前15字，帮助区分同名客户
+                HStack(spacing: 6) {
+                    Text(customer.phone)
+                        .font(.caption).foregroundColor(.gray)
+                    if let addr = customer.address, !addr.isEmpty {
+                        Text("·").font(.caption).foregroundColor(.gray)
+                        Text(String(addr.prefix(15)))
+                            .font(.caption).foregroundColor(.gray).lineLimit(1)
+                    }
                 }
             }
 
