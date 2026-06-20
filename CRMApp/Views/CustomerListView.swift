@@ -485,10 +485,10 @@ struct CustomerEditSheet: View {
     @State private var note:           String
     @State private var conversions:    [ConversionRecord]
 
-    // 行内编辑成交记录
-    @State private var editingRecord:  ConversionRecord? = nil
-    @State private var editAmountStr:  String = ""
-    @State private var editDate:       Date   = Date()
+    // 行内编辑成交记录 — 用独立 State 持有编辑中的快照，避免绑定引发重建
+    @State private var editingIndex:   Int?    = nil
+    @State private var editAmountStr:  String  = ""
+    @State private var editDate:       Date    = Date()
     @State private var showEditRecord  = false
 
     private let genderOptions = ["未知", "女", "男"]
@@ -562,16 +562,19 @@ struct CustomerEditSheet: View {
                     if conversions.isEmpty {
                         Text("暂无成交记录").foregroundColor(.secondary).font(.caption)
                     } else {
-                        ForEach(conversions) { record in
+                        ForEach(conversions.indices, id: \.self) { idx in
+                            let record = conversions[idx]
                             Button {
-                                editingRecord = record
+                                // 存索引快照，不存 record 引用，避免数组重建后引用失效
+                                editingIndex  = idx
                                 editAmountStr = String(Int(record.amount))
                                 editDate      = record.date
                                 showEditRecord = true
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(record.type.rawValue).font(.subheadline).fontWeight(.semibold)
+                                        Text(record.type.rawValue)
+                                            .font(.subheadline).fontWeight(.semibold)
                                             .foregroundColor(.primary)
                                         Text(record.date.formatted(date: .abbreviated, time: .shortened))
                                             .font(.caption2).foregroundColor(.secondary)
@@ -604,23 +607,28 @@ struct CustomerEditSheet: View {
                     Button("取消", role: .cancel) { dismiss() }
                 }
             }
-            .sheet(isPresented: $showEditRecord) {
-                if let record = editingRecord {
-                    RecordEditSheet(
-                        record:       record,
-                        amountStr:    $editAmountStr,
-                        date:         $editDate,
-                        onSave: {
-                            if let idx = conversions.firstIndex(where: { $0.id == record.id }) {
-                                conversions[idx].amount = Double(editAmountStr) ?? record.amount
-                                conversions[idx].date   = editDate
-                            }
-                            showEditRecord = false
-                        },
-                        onCancel: { showEditRecord = false }
-                    )
+        }
+        // sheet 必须挂在 NavigationView 外部，避免在 toolbar 内触发重建死锁
+        .sheet(isPresented: $showEditRecord) {
+            RecordEditSheet(
+                typeName:  editingIndex.map { conversions[$0].type.rawValue } ?? "",
+                amountStr: $editAmountStr,
+                date:      $editDate,
+                onSave: {
+                    // 先关闭 sheet，再修改数组，避免 ForEach identity 崩溃
+                    showEditRecord = false
+                    DispatchQueue.main.async {
+                        guard let idx = editingIndex, idx < conversions.count else { return }
+                        conversions[idx].amount = Double(editAmountStr) ?? conversions[idx].amount
+                        conversions[idx].date   = editDate
+                        editingIndex = nil
+                    }
+                },
+                onCancel: {
+                    showEditRecord = false
+                    editingIndex   = nil
                 }
-            }
+            )
         }
     }
 
@@ -644,7 +652,7 @@ struct CustomerEditSheet: View {
 
 // MARK: - 单笔成交记录行内编辑 Sheet
 struct RecordEditSheet: View {
-    let record:    ConversionRecord
+    let typeName:  String
     @Binding var amountStr: String
     @Binding var date:      Date
     let onSave:   () -> Void
@@ -657,7 +665,7 @@ struct RecordEditSheet: View {
                     HStack {
                         Text("类型").foregroundColor(.secondary)
                         Spacer()
-                        Text(record.type.rawValue).foregroundColor(.primary)
+                        Text(typeName).foregroundColor(.primary)
                     }
                     HStack {
                         Text("金额").foregroundColor(.secondary)
