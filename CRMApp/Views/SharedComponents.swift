@@ -12,7 +12,9 @@ struct InfoRow: View {
         HStack {
             Text(label).foregroundColor(.secondary)
             Spacer()
-            Text(value).multilineTextAlignment(.trailing)
+            Text(value)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
         }
     }
 }
