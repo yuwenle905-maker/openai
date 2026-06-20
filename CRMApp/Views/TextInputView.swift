@@ -168,14 +168,14 @@ struct TextInputView: View {
 
                         if !parseResults.isEmpty {
                             // 保存按钮文案根据匹配情况动态变化
-                            let allNew = parseResults.allSatisfy {
+                            let allNew = parseResults.allSatisfy { r in
                                 store.customers.filter { c in
-                                    c.name == $0.name && c.dataType == .fullCustomer
+                                    c.name == r.name && c.dataType == .fullCustomer
                                 }.isEmpty
                             }
-                            let firstNewName = parseResults.first(where: {
+                            let firstNewName = parseResults.first(where: { r in
                                 store.customers.filter { c in
-                                    c.name == $0.name && c.dataType == .fullCustomer
+                                    c.name == r.name && c.dataType == .fullCustomer
                                 }.isEmpty
                             })?.name
 
