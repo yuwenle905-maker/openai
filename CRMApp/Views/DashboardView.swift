@@ -47,13 +47,33 @@ struct DashboardView: View {
                         KPICard(title: "年度 ROI",   value: yearSummary.roiText,
                                 subtitle: "年度累计",
                                 color: yearSummary.roi >= 1 ? .green : .orange)
-                        KPICard(title: "本月成本",
-                                value: "¥\(Int(monthSummary.totalCost))",
-                                subtitle: "\(monthSummary.importedLeadCount) 条（各自历史单价）",
-                                color: .blue)
-                        KPICard(title: "本月营业额",
-                                value: "¥\(Int(monthSummary.totalRevenue))",
-                                subtitle: "手动录入转化之和", color: .indigo)
+
+                        // 本月成本 — 可点击查看明细
+                        NavigationLink(destination:
+                            MonthlyCostDetailView(
+                                customers: monthAllCustomers,
+                                year: selectedYear, month: selectedMonth
+                            )
+                        ) {
+                            KPICard(title: "本月成本",
+                                    value: "¥\(Int(monthSummary.totalCost))",
+                                    subtitle: "\(monthSummary.importedLeadCount) 条（点击查看明细）",
+                                    color: .blue)
+                        }
+                        .buttonStyle(.plain)
+
+                        // 本月营业额 — 可点击查看明细
+                        NavigationLink(destination:
+                            MonthlyRevenueDetailView(
+                                customers: monthAllCustomers,
+                                year: selectedYear, month: selectedMonth
+                            )
+                        ) {
+                            KPICard(title: "本月营业额",
+                                    value: "¥\(Int(monthSummary.totalRevenue))",
+                                    subtitle: "点击查看流水明细", color: .indigo)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal)
 
@@ -371,5 +391,139 @@ struct FunnelRow: View {
                 .font(.caption2).foregroundColor(.secondary)
         }
         .padding(.horizontal).padding(.vertical, 10)
+    }
+}
+
+// MARK: - 本月营业额明细列表
+struct MonthlyRevenueDetailView: View {
+
+    let customers: [Customer]
+    let year:  Int
+    let month: Int
+
+    // 展开所有成交记录，按时间倒序
+    private struct RevenueEntry: Identifiable {
+        let id = UUID()
+        let customerName:   String
+        let customerNumber: String?
+        let record:         ConversionRecord
+    }
+
+    private var entries: [RevenueEntry] {
+        customers
+            .flatMap { c in
+                c.conversions
+                    .filter { $0.amount > 0 }
+                    .map { RevenueEntry(customerName: c.name, customerNumber: c.customerNumber, record: $0) }
+            }
+            .sorted { $0.record.date > $1.record.date }
+    }
+
+    private var totalRevenue: Double { entries.reduce(0) { $0 + $1.record.amount } }
+
+    var body: some View {
+        List {
+            Section(header: Text("合计 ¥\(Int(totalRevenue)) · 共 \(entries.count) 笔")) {
+                if entries.isEmpty {
+                    Text("本月暂无成交记录").foregroundColor(.secondary)
+                } else {
+                    ForEach(entries) { e in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 4) {
+                                    Text(e.customerName).fontWeight(.semibold)
+                                    if let num = e.customerNumber {
+                                        Text("编号 \(num)")
+                                            .font(.caption2)
+                                            .padding(.horizontal, 4).padding(.vertical, 1)
+                                            .background(Color.blue.opacity(0.1))
+                                            .foregroundColor(.blue).cornerRadius(3)
+                                    }
+                                }
+                                Text(e.record.type.rawValue)
+                                    .font(.caption)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.indigo.opacity(0.12))
+                                    .foregroundColor(.indigo).cornerRadius(4)
+                                Text(e.record.date.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Text("¥\(Int(e.record.amount))")
+                                .fontWeight(.bold).foregroundColor(.green)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("本月营业额明细")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 本月成本明细列表
+struct MonthlyCostDetailView: View {
+
+    let customers: [Customer]
+    let year:  Int
+    let month: Int
+
+    private struct CostEntry: Identifiable {
+        let id = UUID()
+        let customer: Customer
+    }
+
+    private var costEntries: [CostEntry] {
+        customers
+            .filter { $0.dataType == .fullCustomer && $0.costEnabled }
+            .sorted { $0.importDate > $1.importDate }
+            .map { CostEntry(customer: $0) }
+    }
+
+    private var totalCost: Double { costEntries.reduce(0) { $0 + $1.customer.lineCost } }
+
+    var body: some View {
+        List {
+            Section(header: Text("合计成本 ¥\(Int(totalCost)) · 共 \(costEntries.count) 位客户")) {
+                if costEntries.isEmpty {
+                    Text("本月暂无成本记录").foregroundColor(.secondary)
+                } else {
+                    ForEach(costEntries) { e in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 4) {
+                                    Text(e.customer.name).fontWeight(.semibold)
+                                    if let num = e.customer.customerNumber {
+                                        Text("编号 \(num)")
+                                            .font(.caption2)
+                                            .padding(.horizontal, 4).padding(.vertical, 1)
+                                            .background(Color.blue.opacity(0.1))
+                                            .foregroundColor(.blue).cornerRadius(3)
+                                    }
+                                }
+                                if let addr = e.customer.address {
+                                    Text(String(addr.prefix(20)))
+                                        .font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                                }
+                                Text(e.customer.importDayDisplay + " 导入")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("¥\(Int(e.customer.lineCost))")
+                                    .fontWeight(.bold).foregroundColor(.blue)
+                                Text("历史单价").font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("本月成本明细")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

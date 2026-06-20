@@ -167,19 +167,9 @@ struct ImportView: View {
                 continue
             }
 
-            // 完整客户写入
+            // 完整客户写入（智能导入只建档案，不生成成交流水，防止身高/体重等数字污染营业额）
             let phone           = row.phone ?? "unknown_\(UUID().uuidString.prefix(8))"
             let currentLineCost = store.settings.leadUnitPrice
-            var conversions: [ConversionRecord] = []
-            // 如果有解析到金额，生成一条真实的初始成交记录
-            if let amt = row.leadAmount, amt > 0 {
-                conversions.append(ConversionRecord(
-                    type:        row.conversionType,
-                    amount:      amt,
-                    date:        Date(),
-                    productNote: row.productNote
-                ))
-            }
             let customer = Customer(
                 name:          row.name,
                 phone:         phone,
@@ -188,13 +178,13 @@ struct ImportView: View {
                 height:        row.height,
                 weight:        row.weight,
                 gender:        row.gender,
-                costEnabled:   true,   // 智能导入默认纳入成本计算
+                costEnabled:   true,
                 leadAmount:    row.leadAmount,
                 lineCost:      currentLineCost,
                 dataType:      .fullCustomer,
                 importBatchID: batchID,
                 importDate:    Date(),
-                conversions:   conversions
+                conversions:   []   // 智能导入不生成成交流水，需手动录入
             )
             store.addCustomer(customer)
             batchFull    += 1
