@@ -51,20 +51,7 @@ jobs:
           set -o pipefail
           SDK=$(xcodebuild -showsdks | grep -oE 'iphoneos[0-9.]+' | sort -V | tail -1)
           echo "Using SDK: $SDK"
-          # Clean 单独执行，指定 SDK 避免 destination 缺失报错
-          xcodebuild \
-            -project CRMApp.xcodeproj \
-            -scheme CRMApp \
-            -configuration Release \
-            -sdk "$SDK" \
-            ARCHS="arm64" \
-            ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            clean
-          # Build
+          # CI runner 每次全新环境，无需 clean
           xcodebuild \
             -project CRMApp.xcodeproj \
             -scheme CRMApp \
