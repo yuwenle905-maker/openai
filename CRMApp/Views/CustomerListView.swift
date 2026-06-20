@@ -530,9 +530,10 @@ struct CustomerEditSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }
-                        .fontWeight(.semibold)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button(action: save) {
+                        Text("保存").font(.headline)
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消", role: .cancel) { dismiss() }
