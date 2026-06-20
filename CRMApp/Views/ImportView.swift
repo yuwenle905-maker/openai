@@ -218,12 +218,17 @@ struct ImportConfirmSheet: View {
     let onConfirm: ([ParsedRow]) -> Void
     let onCancel:  () -> Void
 
-    // 去重冲突处理
+    // 同名+电话冲突（完整客户）
     @State private var conflictRow:       ParsedRow?
     @State private var showConflict       = false
     @State private var confirmedRows:     [ParsedRow]
     @State private var pendingQueue:      [ParsedRow]
     @State private var processedRows:     [ParsedRow] = []
+
+    // 前置同名绑定（流水行）
+    @State private var bindingRow:        ParsedRow?
+    @State private var bindingCandidates: [Customer] = []
+    @State private var showBindingSheet   = false
 
     init(rows: [ParsedRow], failed: [ParseFailedRow],
          onConfirm: @escaping ([ParsedRow]) -> Void,
@@ -296,7 +301,7 @@ struct ImportConfirmSheet: View {
                 }
             }
         }
-        // 去重冲突弹窗
+        // 同名+电话完整客户冲突弹窗（原有）
         .confirmationDialog(
             conflictRow.map { "发现重复：\($0.name)（\($0.phone ?? "")）" } ?? "重复数据",
             isPresented: $showConflict,
@@ -308,26 +313,110 @@ struct ImportConfirmSheet: View {
         } message: {
             Text("该电话号码在数据库中已存在，请选择处理方式。")
         }
+        // 前置同名绑定 Sheet（新增）
+        .sheet(isPresented: $showBindingSheet) {
+            if let row = bindingRow {
+                NameBindingSheet(
+                    row:        row,
+                    candidates: bindingCandidates,
+                    onBind:     { target in handleBind(row: row, to: target) },
+                    onNew:      { handleBindAsNew(row: row) }
+                )
+                .environmentObject(store)
+            }
+        }
     }
 
-    // MARK: 确认时逐条检查冲突（姓名+电话双重匹配才算同一人）
+    // MARK: ── 确认入库：先处理流水行同名拦截，再处理完整客户冲突
     private func handleConfirm() {
-        let conflicting = confirmedRows.filter { row in
+        // 把所有行放入待处理队列，逐条过一遍
+        pendingQueue  = confirmedRows
+        processedRows = []
+        processNextPending()
+    }
+
+    private func processNextPending() {
+        guard !pendingQueue.isEmpty else {
+            // 队列清空：对 processedRows 里的完整客户再做电话冲突检测
+            checkFullCustomerConflicts()
+            return
+        }
+
+        let row = pendingQueue.removeFirst()
+
+        // 流水行：检索同名客户，有则弹绑定 Sheet
+        if row.dataType == .ledgerEntry {
+            let matches = store.customers.filter {
+                $0.name == row.name && $0.dataType == .fullCustomer
+            }
+            if !matches.isEmpty {
+                bindingRow        = row
+                bindingCandidates = matches
+                showBindingSheet  = true
+                // 流程在此挂起，等用户在 NameBindingSheet 选择后回调
+                return
+            }
+            // 没有同名客户，流水行直接放入 processed（commitToStore 会处理）
+            processedRows.append(row)
+            processNextPending()
+            return
+        }
+
+        // 完整客户行：直接放入 processed，后续统一做电话冲突检测
+        processedRows.append(row)
+        processNextPending()
+    }
+
+    // 用户选择「绑定到此客户」
+    private func handleBind(row: ParsedRow, to target: Customer) {
+        showBindingSheet = false
+        // 把成交金额作为 ConversionRecord 写入目标客户
+        if let idx = store.customers.firstIndex(where: { $0.id == target.id }) {
+            let record = ConversionRecord(
+                type:        row.conversionType,
+                amount:      row.leadAmount ?? 0,
+                date:        Date(),
+                productNote: row.productNote
+            )
+            store.customers[idx].conversions.append(record)
+            store.save()
+        }
+        bindingRow = nil
+        processNextPending()
+    }
+
+    // 用户选择「新建独立客户」
+    private func handleBindAsNew(row: ParsedRow) {
+        showBindingSheet = false
+        // 把这条流水行以 fullCustomer 身份放入 processed
+        var newRow          = row
+        newRow.dataType     = .fullCustomer
+        processedRows.append(newRow)
+        bindingRow = nil
+        processNextPending()
+    }
+
+    // MARK: ── 完整客户电话冲突检测（原有逻辑）
+    private func checkFullCustomerConflicts() {
+        let conflicting = processedRows.filter { row in
             guard let phone = row.phone else { return false }
             return store.customers.contains {
                 $0.phone == phone && $0.name == row.name
             }
         }
         if conflicting.isEmpty {
-            onConfirm(confirmedRows)
+            onConfirm(processedRows)
         } else {
-            pendingQueue  = conflicting
-            processedRows = confirmedRows.filter { row in
+            let queue     = conflicting
+            let clean     = processedRows.filter { row in
                 guard let phone = row.phone else { return true }
                 return !store.customers.contains {
                     $0.phone == phone && $0.name == row.name
                 }
             }
+            // 重置队列，借用原有 conflictRow 流程
+            pendingQueue  = queue
+            processedRows = clean
             showNextConflict()
         }
     }
@@ -360,7 +449,6 @@ struct ImportConfirmSheet: View {
                     newCustomer.leadAmount = row.leadAmount ?? existing.leadAmount
                     store.updateCustomer(newCustomer)
                 } else {
-                    // merge：更新 leadAmount，不动 conversions
                     existing.leadAmount = row.leadAmount ?? existing.leadAmount
                     store.updateCustomer(existing)
                 }
@@ -416,5 +504,110 @@ struct ParsedRowCell: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - 前置同名绑定 Sheet
+struct NameBindingSheet: View {
+
+    @Environment(\.dismiss) var dismiss
+    let row:        ParsedRow
+    let candidates: [Customer]
+    let onBind:     (Customer) -> Void
+    let onNew:      () -> Void
+
+    var body: some View {
+        NavigationView {
+            List {
+                // 本次解析的流水信息
+                Section(header: Text("本次录入内容")) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(row.name).font(.headline)
+                            Text(row.conversionType.rawValue)
+                                .font(.caption)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.12))
+                                .foregroundColor(.blue)
+                                .cornerRadius(4)
+                        }
+                        Spacer()
+                        if let amt = row.leadAmount {
+                            Text("¥\(Int(amt))")
+                                .font(.title3).fontWeight(.bold).foregroundColor(.green)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                // 同名客户列表
+                Section(header: Text("系统中检索到 \(candidates.count) 位同名客户")) {
+                    ForEach(candidates) { candidate in
+                        Button {
+                            onBind(candidate)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(Color.blue.opacity(0.15))
+                                    .frame(width: 36, height: 36)
+                                    .overlay(
+                                        Text(String(candidate.name.prefix(1)))
+                                            .font(.subheadline).fontWeight(.semibold)
+                                            .foregroundColor(.blue)
+                                    )
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(candidate.name).fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                    Text(candidate.phone)
+                                        .font(.caption).foregroundColor(.secondary)
+                                    HStack(spacing: 8) {
+                                        if let h = candidate.height {
+                                            Text("\(Int(h))cm").font(.caption2).foregroundColor(.secondary)
+                                        }
+                                        if let w = candidate.weight {
+                                            Text("\(Int(w))kg").font(.caption2).foregroundColor(.secondary)
+                                        }
+                                        if candidate.gender != "未知" {
+                                            Text(candidate.gender).font(.caption2).foregroundColor(.secondary)
+                                        }
+                                        if let addr = candidate.address {
+                                            Text(String(addr.prefix(12)))
+                                                .font(.caption2).foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.right.circle.fill")
+                                    .foregroundColor(.blue).font(.title3)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                // 新建按钮
+                Section {
+                    Button {
+                        onNew()
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Label("新建独立客户（同名不同人）", systemImage: "person.badge.plus")
+                                .foregroundColor(.orange)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("检测到同名客户")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("跳过", role: .cancel) { onNew() }
+                }
+            }
+        }
     }
 }
