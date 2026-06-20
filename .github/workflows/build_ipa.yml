@@ -27,10 +27,10 @@ jobs:
       # ── 3. Install iOS platform SDK (required for device build) ───────────
       - name: Install iOS platform
         run: |
-          # Download iOS 18 device SDK if not already present
-          xcodebuild -downloadPlatform iOS || true
-          # Show what SDKs are available
-          xcodebuild -showsdks | grep iphoneos || true
+          # Show available SDKs for diagnostics
+          xcodebuild -showsdks
+          # List installed platforms
+          ls "$(xcode-select -p)/Platforms/" || true
 
       # ── 4. Install XcodeGen ────────────────────────────────────────────────
       - name: Install XcodeGen
@@ -45,19 +45,22 @@ jobs:
           echo "=== Schemes ==="
           xcodebuild -project CRMApp.xcodeproj -list
 
-      # ── 6. Build (unsigned, generic iOS device, arm64) ────────────────────
+      # ── 6. Build (unsigned, arm64 device binary) ──────────────────────────
       - name: Build app
         run: |
           set -o pipefail
-          # Detect the installed iphoneos SDK version dynamically
+          # Detect installed iphoneos SDK
           SDK=$(xcodebuild -showsdks | grep -oE 'iphoneos[0-9.]+' | sort -V | tail -1)
           echo "Using SDK: $SDK"
+          # Build without -destination so xcodebuild skips platform registration check.
+          # ARCHS=arm64 + ONLY_ACTIVE_ARCH=NO produces a device-compatible binary.
           xcodebuild \
             -project CRMApp.xcodeproj \
             -scheme CRMApp \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
             -sdk "$SDK" \
+            ARCHS="arm64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
