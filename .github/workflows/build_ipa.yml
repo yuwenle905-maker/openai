@@ -49,11 +49,22 @@ jobs:
       - name: Build app
         run: |
           set -o pipefail
-          # Detect installed iphoneos SDK
           SDK=$(xcodebuild -showsdks | grep -oE 'iphoneos[0-9.]+' | sort -V | tail -1)
           echo "Using SDK: $SDK"
-          # Build without -destination so xcodebuild skips platform registration check.
-          # ARCHS=arm64 + ONLY_ACTIVE_ARCH=NO produces a device-compatible binary.
+          # Clean 单独执行，指定 SDK 避免 destination 缺失报错
+          xcodebuild \
+            -project CRMApp.xcodeproj \
+            -scheme CRMApp \
+            -configuration Release \
+            -sdk "$SDK" \
+            ARCHS="arm64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            clean
+          # Build
           xcodebuild \
             -project CRMApp.xcodeproj \
             -scheme CRMApp \
@@ -66,7 +77,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             CONFIGURATION_BUILD_DIR="${{ github.workspace }}/build/Release-iphoneos" \
-            clean build \
+            build \
             2>&1 | tee build.log; EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             echo ""
