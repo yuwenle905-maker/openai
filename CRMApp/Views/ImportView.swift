@@ -149,7 +149,13 @@ struct ImportView: View {
             // 流水记录：只追加转化，不新增客户，不计入营业额
             // 注意：流水金额也不写入 ConversionRecord.amount（因为尚未成交）
             if row.dataType == .ledgerEntry {
-                if let idx = store.customers.firstIndex(where: { $0.name == row.name }) {
+                // 流水关联：姓名+电话双重匹配，避免同名不同人误关联
+                let matchPhone = row.phone
+                if let idx = store.customers.firstIndex(where: {
+                    $0.name == row.name &&
+                    $0.dataType == .fullCustomer &&
+                    (matchPhone == nil || $0.phone == matchPhone)
+                }) {
                     // 仅记录跟进事件，金额为 0（实际成交时再手动录入）
                     let record = ConversionRecord(
                         type:        row.conversionType,
@@ -304,11 +310,13 @@ struct ImportConfirmSheet: View {
         }
     }
 
-    // MARK: 确认时逐条检查冲突
+    // MARK: 确认时逐条检查冲突（姓名+电话双重匹配才算同一人）
     private func handleConfirm() {
         let conflicting = confirmedRows.filter { row in
             guard let phone = row.phone else { return false }
-            return store.findExisting(phone: phone) != nil
+            return store.customers.contains {
+                $0.phone == phone && $0.name == row.name
+            }
         }
         if conflicting.isEmpty {
             onConfirm(confirmedRows)
@@ -316,7 +324,9 @@ struct ImportConfirmSheet: View {
             pendingQueue  = conflicting
             processedRows = confirmedRows.filter { row in
                 guard let phone = row.phone else { return true }
-                return store.findExisting(phone: phone) == nil
+                return !store.customers.contains {
+                    $0.phone == phone && $0.name == row.name
+                }
             }
             showNextConflict()
         }

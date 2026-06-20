@@ -350,8 +350,9 @@ struct CustomerRow: View {
                     }
                 }
                 Text(customer.phone).font(.caption).foregroundColor(.secondary)
-                if let addr = customer.address {
-                    Text(addr).font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                if let addr = customer.address, !addr.isEmpty {
+                    Text(String(addr.prefix(15)))
+                        .font(.caption2).foregroundColor(.secondary).lineLimit(1)
                 }
             }
 
