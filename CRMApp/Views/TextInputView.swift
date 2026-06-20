@@ -460,7 +460,7 @@ struct NewCustomerFromLedgerSheet: View {
                             let num = customerNumber.trimmingCharacters(in: .whitespaces)
                             Label(num.isEmpty ? "直接创建（编号留空）" : "确定创建（编号：\(num)）",
                                   systemImage: "person.crop.circle.badge.plus")
-                                .foregroundColor(.white).fontWeight(.semibold)
+                                .foregroundColor(.white).font(.body.weight(.semibold))
                             Spacer()
                         }
                         .padding()
@@ -471,7 +471,6 @@ struct NewCustomerFromLedgerSheet: View {
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     .listRowBackground(Color.clear)
                 }
-            }
             .listStyle(.insetGrouped)
             .navigationTitle("新建客户档案")
             .navigationBarTitleDisplayMode(.inline)
@@ -673,7 +672,7 @@ struct BatchDuplicateSheet: View {
                         HStack {
                             Spacer()
                             Label("合并为同一客户的 \(results.count) 次订购", systemImage: "arrow.triangle.merge")
-                                .foregroundColor(.white).fontWeight(.semibold)
+                                .foregroundColor(.white).font(.body.weight(.semibold))
                             Spacer()
                         }
                         .padding()
@@ -688,7 +687,7 @@ struct BatchDuplicateSheet: View {
                         HStack {
                             Spacer()
                             Label("各自独立新建（\(results.count) 个同名新客户）", systemImage: "person.badge.plus")
-                                .foregroundColor(.orange).fontWeight(.semibold)
+                                .foregroundColor(.orange).font(.body.weight(.semibold))
                             Spacer()
                         }
                         .padding()
