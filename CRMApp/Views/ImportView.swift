@@ -516,19 +516,31 @@ struct NameBindingSheet: View {
     let onBind:     (Customer) -> Void
     let onNew:      () -> Void
 
+    // 「查看完整资料」用 sheet(item:) 驱动，关闭后无缝返回本面板
+    @State private var previewCustomer: Customer? = nil
+
     var body: some View {
         NavigationView {
             List {
-                // 本次解析的流水信息
+
+                // ── 本次录入内容摘要 ──────────────────────────
                 Section(header: Text("本次录入内容")) {
-                    HStack {
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(Color.orange.opacity(0.15))
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                Text(String(row.name.prefix(1)))
+                                    .font(.subheadline).fontWeight(.semibold)
+                                    .foregroundColor(.orange)
+                            )
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(row.name).font(.headline)
+                            Text(row.name).fontWeight(.semibold)
                             Text(row.conversionType.rawValue)
                                 .font(.caption)
                                 .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.12))
-                                .foregroundColor(.blue)
+                                .background(Color.orange.opacity(0.12))
+                                .foregroundColor(.orange)
                                 .cornerRadius(4)
                         }
                         Spacer()
@@ -540,15 +552,15 @@ struct NameBindingSheet: View {
                     .padding(.vertical, 4)
                 }
 
-                // 同名客户列表
+                // ── 同名候选客户：每条独立展示，两个互斥按钮 ──
                 Section(header: Text("系统中检索到 \(candidates.count) 位同名客户")) {
                     ForEach(candidates) { candidate in
-                        Button {
-                            onBind(candidate)
-                        } label: {
-                            HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 10) {
+
+                            // 客户简要信息行
+                            HStack(spacing: 10) {
                                 Circle()
-                                    .fill(Color.blue.opacity(0.15))
+                                    .fill(Color.blue.opacity(0.12))
                                     .frame(width: 36, height: 36)
                                     .overlay(
                                         Text(String(candidate.name.prefix(1)))
@@ -557,10 +569,9 @@ struct NameBindingSheet: View {
                                     )
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(candidate.name).fontWeight(.semibold)
-                                        .foregroundColor(.primary)
                                     Text(candidate.phone)
                                         .font(.caption).foregroundColor(.secondary)
-                                    HStack(spacing: 8) {
+                                    HStack(spacing: 6) {
                                         if let h = candidate.height {
                                             Text("\(Int(h))cm").font(.caption2).foregroundColor(.secondary)
                                         }
@@ -571,30 +582,78 @@ struct NameBindingSheet: View {
                                             Text(candidate.gender).font(.caption2).foregroundColor(.secondary)
                                         }
                                         if let addr = candidate.address {
-                                            Text(String(addr.prefix(12)))
+                                            Text(String(addr.prefix(10)))
                                                 .font(.caption2).foregroundColor(.secondary)
+                                                .lineLimit(1)
                                         }
                                     }
                                 }
                                 Spacer()
-                                Image(systemName: "arrow.right.circle.fill")
-                                    .foregroundColor(.blue).font(.title3)
+                                // 查看完整资料入口
+                                Button {
+                                    previewCustomer = candidate
+                                } label: {
+                                    Label("完整资料", systemImage: "doc.text.magnifyingglass")
+                                        .font(.caption)
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(Color(.secondarySystemGroupedBackground))
+                                        .cornerRadius(8)
+                                        .foregroundColor(.blue)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .padding(.vertical, 4)
+
+                            // 互斥操作按钮组
+                            HStack(spacing: 10) {
+                                // 按钮A：追加到该已有客户
+                                Button {
+                                    onBind(candidate)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "person.crop.circle.badge.checkmark")
+                                        Text("追加到此客户")
+                                    }
+                                    .font(.subheadline).fontWeight(.semibold)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(10)
+                                }
+                                .buttonStyle(.plain)
+
+                                // 按钮B：作为同名新客户写入
+                                Button {
+                                    onNew()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "person.badge.plus")
+                                        Text("同名新客户")
+                                    }
+                                    .font(.subheadline).fontWeight(.semibold)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .background(Color.orange.opacity(0.15))
+                                    .foregroundColor(.orange)
+                                    .cornerRadius(10)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .padding(.vertical, 6)
                     }
                 }
 
-                // 新建按钮
+                // ── 底部：直接新建（无需对照已有客户）────────
                 Section {
                     Button {
                         onNew()
                     } label: {
                         HStack {
                             Spacer()
-                            Label("新建独立客户（同名不同人）", systemImage: "person.badge.plus")
-                                .foregroundColor(.orange)
+                            Label("直接新建独立客户", systemImage: "plus.circle")
+                                .foregroundColor(.secondary)
+                                .font(.subheadline)
                             Spacer()
                         }
                     }
@@ -605,8 +664,19 @@ struct NameBindingSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("跳过", role: .cancel) { onNew() }
+                    Button("跳过此条", role: .cancel) { onNew() }
                 }
+            }
+        }
+        // 查看完整客户资料（关闭后无缝返回本面板）
+        .sheet(item: $previewCustomer) { customer in
+            NavigationView {
+                CustomerDetailView(customer: customer)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("关闭") { previewCustomer = nil }
+                        }
+                    }
             }
         }
     }
