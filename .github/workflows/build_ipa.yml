@@ -24,11 +24,19 @@ jobs:
             || sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)/Contents/Developer"
           xcodebuild -version
 
-      # ── 3. Install XcodeGen ────────────────────────────────────────────────
+      # ── 3. Install iOS platform SDK (required for device build) ───────────
+      - name: Install iOS platform
+        run: |
+          # Download iOS 18 device SDK if not already present
+          xcodebuild -downloadPlatform iOS || true
+          # Show what SDKs are available
+          xcodebuild -showsdks | grep iphoneos || true
+
+      # ── 4. Install XcodeGen ────────────────────────────────────────────────
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # ── 4. Generate .xcodeproj from project.yml ───────────────────────────
+      # ── 5. Generate .xcodeproj from project.yml ───────────────────────────
       - name: Generate Xcode project
         run: |
           xcodegen generate --spec project.yml
@@ -37,16 +45,19 @@ jobs:
           echo "=== Schemes ==="
           xcodebuild -project CRMApp.xcodeproj -list
 
-      # ── 5. Build (unsigned, generic iOS device, arm64) ────────────────────
+      # ── 6. Build (unsigned, generic iOS device, arm64) ────────────────────
       - name: Build app
         run: |
           set -o pipefail
+          # Detect the installed iphoneos SDK version dynamically
+          SDK=$(xcodebuild -showsdks | grep -oE 'iphoneos[0-9.]+' | sort -V | tail -1)
+          echo "Using SDK: $SDK"
           xcodebuild \
             -project CRMApp.xcodeproj \
             -scheme CRMApp \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -sdk iphoneos \
+            -sdk "$SDK" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -61,7 +72,7 @@ jobs:
             exit $EXIT
           fi
 
-      # ── 6. Upload build log (always) ──────────────────────────────────────
+      # ── 7. Upload build log (always) ──────────────────────────────────────
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,7 +81,7 @@ jobs:
           path: build.log
           retention-days: 7
 
-      # ── 7. Verify .app was produced ───────────────────────────────────────
+      # ── 8. Verify .app was produced ───────────────────────────────────────
       - name: Verify build output
         run: |
           APP_PATH="${{ github.workspace }}/build/Release-iphoneos/CRMApp.app"
@@ -83,7 +94,7 @@ jobs:
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "Found: $APP_PATH"
 
-      # ── 8. Package as TrollStore-compatible .ipa ──────────────────────────
+      # ── 9. Package as TrollStore-compatible .ipa ──────────────────────────
       - name: Package as TrollStore IPA
         run: |
           cd "${{ github.workspace }}/build/Release-iphoneos"
@@ -92,7 +103,7 @@ jobs:
           zip -r "${{ github.workspace }}/CRMApp.ipa" Payload
           echo "IPA size: $(du -sh "${{ github.workspace }}/CRMApp.ipa" | cut -f1)"
 
-      # ── 9. Upload IPA artifact ────────────────────────────────────────────
+      # ── 10. Upload IPA artifact ───────────────────────────────────────────
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
