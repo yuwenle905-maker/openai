@@ -613,7 +613,7 @@ struct NameBindingSheet: View {
                                         Image(systemName: "person.crop.circle.badge.checkmark")
                                         Text("追加到此客户")
                                     }
-                                    .font(.subheadline).fontWeight(.semibold)
+                                    .font(.subheadline.weight(.semibold))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 9)
                                     .background(Color.blue)
@@ -630,7 +630,7 @@ struct NameBindingSheet: View {
                                         Image(systemName: "person.badge.plus")
                                         Text("同名新客户")
                                     }
-                                    .font(.subheadline).fontWeight(.semibold)
+                                    .font(.subheadline.weight(.semibold))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 9)
                                     .background(Color.orange.opacity(0.15))
