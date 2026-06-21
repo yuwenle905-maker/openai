@@ -58,6 +58,7 @@ jobs:
             -scheme AIAggregator \
             -configuration Release \
             -sdk "$SDK" \
+            -destination 'generic/platform=iOS' \
             ARCHS="arm64" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
