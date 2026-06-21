@@ -23,18 +23,23 @@ final class AIOrchestrator: ObservableObject {
 
     // MARK: - Public
 
-    func send(query: String) async {
-        deepSeekResponse = ""
-        geminiResponse   = ""
-        mergedResponse   = ""
+    func send(query: String) {
+        deepSeekResponse  = ""
+        geminiResponse    = ""
+        mergedResponse    = ""
         isDeepSeekLoading = true
         isGeminiLoading   = true
 
-        // async let 在同一 actor 上并发执行两个异步任务，
-        // 避免 withTaskGroup + @MainActor 捕获导致的 Sendability 崩溃
-        async let ds: Void = webVM.sendToDeepSeek(query: query)
-        async let gm: Void = webVM.sendToGemini(query: query)
-        _ = await (ds, gm)
+        // 各自独立的 MainActor Task，完全避免 async let / withTaskGroup
+        // 的 Sendability 问题；状态由 Combine 绑定在回复到达时更新
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.webVM.sendToDeepSeek(query: query)
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.webVM.sendToGemini(query: query)
+        }
     }
 
     func merge() async {

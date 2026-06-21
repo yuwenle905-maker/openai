@@ -40,11 +40,34 @@ struct WebViewContainer: UIViewRepresentable {
 }
 
 // MARK: - ExistingWebViewContainer
-// 包装一个已存在的 WKWebView 实例（不新建），供 AccountView 展示 WebViewModel 里的 WebView。
-// 这样全 App 只有 2 个 WKWebView，避免内存溢出崩溃。
+// 用一个普通 UIView 作壳，WKWebView 作子视图挂进去。
+// 切换平台时 updateUIView 负责换子视图，不会触发 UIKit
+// "A view can only be inserted in one place at a time" 崩溃。
 struct ExistingWebViewContainer: UIViewRepresentable {
     let webView: WKWebView
 
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func makeUIView(context: Context) -> UIView {
+        let shell = UIView()
+        shell.backgroundColor = .clear
+        attach(webView, to: shell)
+        return shell
+    }
+
+    func updateUIView(_ shell: UIView, context: Context) {
+        guard shell.subviews.first !== webView else { return }
+        shell.subviews.forEach { $0.removeFromSuperview() }
+        attach(webView, to: shell)
+    }
+
+    private func attach(_ wv: WKWebView, to shell: UIView) {
+        wv.removeFromSuperview()          // 先从原有父视图脱离
+        shell.addSubview(wv)
+        wv.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            wv.topAnchor.constraint(equalTo: shell.topAnchor),
+            wv.leadingAnchor.constraint(equalTo: shell.leadingAnchor),
+            wv.trailingAnchor.constraint(equalTo: shell.trailingAnchor),
+            wv.bottomAnchor.constraint(equalTo: shell.bottomAnchor),
+        ])
+    }
 }

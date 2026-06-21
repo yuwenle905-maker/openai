@@ -4,9 +4,13 @@ import UIKit
 struct WorkbenchView: View {
     @EnvironmentObject private var orchestrator: AIOrchestrator
     @State private var inputText = ""
-    @State private var isSending = false
     @State private var showMergeButton = false
     @FocusState private var isInputFocused: Bool
+
+    // 由 orchestrator 的加载状态驱动，不用额外的本地状态
+    private var isSending: Bool {
+        orchestrator.isDeepSeekLoading || orchestrator.isGeminiLoading
+    }
 
     var body: some View {
         NavigationStack {
@@ -97,7 +101,7 @@ struct WorkbenchView: View {
                 isFocused: $isInputFocused,
                 isSending: isSending
             ) {
-                Task { await sendQuery() }
+                sendQuery()
             }
             // Tab Bar 高度兜底（键盘收起时保证不被 Tab Bar 遮挡）
             .padding(.bottom, isInputFocused ? 0 : 80)
@@ -120,13 +124,12 @@ struct WorkbenchView: View {
 
     // MARK: - Send Action
 
-    private func sendQuery() async {
-        guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    private func sendQuery() {
+        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         isInputFocused = false
-        isSending = true
-        await orchestrator.send(query: inputText)
-        isSending = false
         inputText = ""
+        orchestrator.send(query: trimmed)   // 同步触发，状态由 orchestrator 管理
     }
 }
 
