@@ -14,19 +14,16 @@ struct WorkbenchView: View {
                 DS.Gradient.appBackground.ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    // ── 导航栏 ──────────────────────────────
                     WorkbenchNavBar()
 
-                    // ── 回复卡片区域 ──────────────────────────
+                    // ── 回复内容区 ─────────────────────────────────────────────
                     ScrollView {
                         VStack(spacing: DS.Space.md) {
-                            // 状态提示
                             if orchestrator.deepSeekResponse.isEmpty && orchestrator.geminiResponse.isEmpty {
                                 EmptyStateView()
                                     .transition(.opacity.combined(with: .scale))
                             }
 
-                            // DeepSeek 回复
                             if !orchestrator.deepSeekResponse.isEmpty || orchestrator.isDeepSeekLoading {
                                 AIResponseCardView(
                                     title: "DeepSeek",
@@ -39,7 +36,6 @@ struct WorkbenchView: View {
                                 .transition(.move(edge: .leading).combined(with: .opacity))
                             }
 
-                            // Gemini 回复
                             if !orchestrator.geminiResponse.isEmpty || orchestrator.isGeminiLoading {
                                 AIResponseCardView(
                                     title: "Gemini",
@@ -52,39 +48,25 @@ struct WorkbenchView: View {
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                             }
 
-                            // 整合结果
                             if !orchestrator.mergedResponse.isEmpty {
                                 MergedResponseCard(content: orchestrator.mergedResponse)
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
 
-                            // 底部留白（避免被 Tab Bar 遮挡）
-                            Spacer().frame(height: 100)
+                            // 底部留白，避免内容贴着输入栏
+                            Color.clear.frame(height: DS.Space.lg)
                         }
                         .padding(DS.Space.md)
                         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.deepSeekResponse)
                         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.geminiResponse)
                     }
-
-                    // ── 整合按钮 ──────────────────────────────
-                    if showMergeButton {
-                        MergeButtonRow(isMerging: orchestrator.isMerging) {
-                            Task { await orchestrator.merge() }
-                        }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .padding(.horizontal, DS.Space.md)
-                        .padding(.bottom, DS.Space.sm)
+                    // 下滑手势收起键盘（最自然的交互方式）
+                    .scrollDismissesKeyboard(.interactively)
+                    // 将底部输入栏纳入 safe area，让 ScrollView 自动留出空间
+                    // 并随键盘一起上移，InputBar 始终可见
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        bottomBar
                     }
-
-                    // ── 输入区域 ──────────────────────────────
-                    InputBar(
-                        text: $inputText,
-                        isFocused: $isInputFocused,
-                        isSending: isSending
-                    ) {
-                        Task { await sendQuery() }
-                    }
-                    .padding(.bottom, 80) // Tab Bar 高度
                 }
             }
         }
@@ -95,6 +77,48 @@ struct WorkbenchView: View {
             showMergeButton = !orchestrator.deepSeekResponse.isEmpty && !new.isEmpty
         }
     }
+
+    // MARK: - Bottom Bar（InputBar + 整合按钮）
+
+    @ViewBuilder
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            if showMergeButton {
+                MergeButtonRow(isMerging: orchestrator.isMerging) {
+                    Task { await orchestrator.merge() }
+                }
+                .padding(.horizontal, DS.Space.md)
+                .padding(.top, DS.Space.sm)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            InputBar(
+                text: $inputText,
+                isFocused: $isInputFocused,
+                isSending: isSending
+            ) {
+                Task { await sendQuery() }
+            }
+            // Tab Bar 高度兜底（键盘收起时保证不被 Tab Bar 遮挡）
+            .padding(.bottom, isInputFocused ? 0 : 80)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showMergeButton)
+        .animation(.easeOut(duration: 0.25), value: isInputFocused)
+        // 确保底部背景延伸到 home indicator
+        .background(
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+                Rectangle().fill(DS.Color.bgCard.opacity(0.85))
+                Rectangle()
+                    .fill(DS.Color.borderHighlight)
+                    .frame(height: 0.5)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    // MARK: - Send Action
 
     private func sendQuery() async {
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -125,7 +149,6 @@ private struct WorkbenchNavBar: View {
                     .foregroundColor(DS.Color.textSecondary)
             }
             Spacer()
-            // 状态指示灯
             HStack(spacing: 6) {
                 StatusDot(color: DS.Color.deepSeek, label: "DS")
                 StatusDot(color: DS.Color.gemini, label: "GM")
@@ -196,20 +219,15 @@ private struct AIResponseCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.sm) {
-            // 标题行
             HStack(spacing: DS.Space.sm) {
-                Image(systemName: icon)
-                    .foregroundColor(accentColor)
+                Image(systemName: icon).foregroundColor(accentColor)
                 Text(title)
                     .font(DS.Font.titleMedium)
                     .foregroundColor(accentColor)
                 Spacer()
                 if isLoading {
-                    ProgressView()
-                        .tint(accentColor)
-                        .scaleEffect(0.8)
+                    ProgressView().tint(accentColor).scaleEffect(0.8)
                 }
-                // 复制按钮
                 if !content.isEmpty {
                     Button {
                         UIPasteboard.general.string = content
@@ -223,7 +241,6 @@ private struct AIResponseCardView: View {
 
             Divider().background(accentColor.opacity(0.2))
 
-            // 内容
             if isLoading && content.isEmpty {
                 TypingIndicator(color: accentColor)
             } else {
@@ -243,18 +260,15 @@ private struct AIResponseCardView: View {
 
 private struct MergedResponseCard: View {
     let content: String
-
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.sm) {
             HStack(spacing: DS.Space.sm) {
-                Image(systemName: "arrow.triangle.merge")
-                    .foregroundStyle(DS.Gradient.mergeButton)
+                Image(systemName: "arrow.triangle.merge").foregroundStyle(DS.Gradient.mergeButton)
                 Text("整合结论")
                     .font(DS.Font.titleMedium)
                     .foregroundStyle(DS.Gradient.mergeButton)
                 Spacer()
-                Image(systemName: "checkmark.seal.fill")
-                    .foregroundColor(DS.Color.success)
+                Image(systemName: "checkmark.seal.fill").foregroundColor(DS.Color.success)
             }
             Divider().background(DS.Color.orange.opacity(0.3))
             Text(content)
@@ -299,7 +313,6 @@ private struct TypingIndicator: View {
 private struct MergeButtonRow: View {
     let isMerging: Bool
     let action: () -> Void
-
     var body: some View {
         Button(action: action) {
             HStack(spacing: DS.Space.sm) {
@@ -330,17 +343,35 @@ private struct InputBar: View {
     let onSend: () -> Void
 
     var body: some View {
-        HStack(spacing: DS.Space.sm) {
+        HStack(alignment: .bottom, spacing: DS.Space.sm) {
             TextField("向双引擎提问...", text: $text, axis: .vertical)
                 .font(DS.Font.bodyLarge)
                 .foregroundColor(DS.Color.textPrimary)
                 .tint(DS.Color.cyan)
                 .lineLimit(1...5)
                 .focused(isFocused)
-                .padding(DS.Space.sm)
+                .padding(.horizontal, DS.Space.sm)
+                .padding(.vertical, 10)
                 .inputFieldStyle()
+                // ── 键盘工具栏：点"完成"收键盘，同时可审阅输入内容 ──────
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        // 字数统计，帮助用户检查输入
+                        Text("\(text.count) 字")
+                            .font(DS.Font.labelSmall)
+                            .foregroundColor(DS.Color.textMuted)
+                        Spacer()
+                        Button {
+                            isFocused.wrappedValue = false
+                        } label: {
+                            Text("完成")
+                                .font(DS.Font.titleMedium)
+                                .foregroundColor(DS.Color.cyan)
+                        }
+                    }
+                }
 
-            // 发送按钮
+            // 发送按钮（始终与输入框底部对齐）
             Button(action: onSend) {
                 ZStack {
                     if isSending {
@@ -352,9 +383,7 @@ private struct InputBar: View {
                     }
                 }
                 .frame(width: 44, height: 44)
-                .background(
-                    Circle().fill(DS.Gradient.sendButton)
-                )
+                .background(Circle().fill(DS.Gradient.sendButton))
                 .shadow(color: DS.Color.cyan.opacity(0.5), radius: 8, x: 0, y: 3)
             }
             .disabled(isSending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -362,13 +391,7 @@ private struct InputBar: View {
             .scaleEffect(isSending ? 0.92 : 1.0)
             .animation(.spring(response: 0.2), value: isSending)
         }
-        .padding(DS.Space.md)
-        .background(
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
-                Rectangle().fill(DS.Color.bgCard.opacity(0.85))
-                Rectangle().fill(DS.Color.borderHighlight).frame(height: 0.5).frame(maxHeight: .infinity, alignment: .top)
-            }
-        )
+        .padding(.horizontal, DS.Space.md)
+        .padding(.vertical, DS.Space.sm)
     }
 }
