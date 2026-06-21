@@ -83,7 +83,19 @@ jobs:
           path: build_ai.log
           retention-days: 7
 
-      # ── 8. Verify .app exists ───────────────────────────────────────────────
+      # ── 8. Verify Bundle ID ─────────────────────────────────────────────────
+      - name: Verify Bundle ID
+        run: |
+          BUNDLE_ID=$(grep -m1 "PRODUCT_BUNDLE_IDENTIFIER" \
+            AIAggregator.xcodeproj/project.pbxproj | awk -F' = ' '{print $2}' | tr -d ';' | xargs)
+          echo "Bundle ID in .xcodeproj: $BUNDLE_ID"
+          if [ "$BUNDLE_ID" != "com.yuwenle905maker.ai-aggregator" ]; then
+            echo "ERROR: Bundle ID mismatch! Expected com.yuwenle905maker.ai-aggregator, got $BUNDLE_ID"
+            exit 1
+          fi
+          echo "Bundle ID OK"
+
+      # ── 9. Verify .app exists ───────────────────────────────────────────────
       - name: Verify build output
         run: |
           APP_PATH="${{ github.workspace }}/build/Release-iphoneos/AIAggregator.app"
