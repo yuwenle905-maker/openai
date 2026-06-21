@@ -5,7 +5,7 @@
     <key>CFBundleDisplayName</key>
     <string>AI 聚合助手</string>
     <key>CFBundleIdentifier</key>
-    <string>com.yourname.ai-aggregator</string>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
