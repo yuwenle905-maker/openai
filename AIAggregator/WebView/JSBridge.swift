@@ -9,8 +9,7 @@ enum JSBridge {
     /// 页面导航完成后自动注入的全局监听脚本（由 WebViewManager 注册为 UserScript）
     /// 监听流式输出结束事件，避免每次查询重复 observe
     static func globalListenerScript(platform: AIPlatform) -> String {
-        let handler    = platform.messageHandler
-        let errHandler = "\(handler)_error"
+        let handler = platform.messageHandler
 
         switch platform {
         case .deepSeek:
@@ -32,7 +31,7 @@ enum JSBridge {
                         const isStreaming = !!document.querySelector(
                             '[class*="thinking"], [class*="loading"], .ds-cursor'
                         );
-                        if (!isStreaming && !text.endsWith('▋')) {
+                        if (!isStreaming && !text.endsWith('\\u25cb')) {
                             window.__dsObserver.disconnect();
                             window.webkit.messageHandlers.\(handler).postMessage(text);
                         }
@@ -76,7 +75,6 @@ enum JSBridge {
             })();
             """
         }
-        _ = errHandler // suppress unused warning
     }
 
     /// 构建"填充输入框 + 点击发送 + 监听回复"的完整 JS 脚本

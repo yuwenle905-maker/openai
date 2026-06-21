@@ -22,25 +22,13 @@ targets:
       - path: AIAggregator
         excludes:
           - "**/*.md"
+          - "**/*.plist"   # Info.plist 由 info.path 单独管理，避免被二次收录为源文件
     info:
-      path: AIAggregator/App/Info.plist
-      properties:
-        CFBundleDisplayName: "AI 聚合"
-        CFBundleIdentifier: com.yourname.AIAggregator
-        CFBundleVersion: "1"
-        CFBundleShortVersionString: "1.0.0"
-        UILaunchScreen: {}
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
+      path: AIAggregator/App/Info.plist   # XcodeGen 读取此文件，自动设置 INFOPLIST_FILE
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourname.AIAggregator
-        INFOPLIST_FILE: AIAggregator/App/Info.plist
         SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        # 不再手写 INFOPLIST_FILE，由上方 info.path 自动注入
     dependencies:
-      - framework: WebKit.framework
-        embed: false
+      - sdk: WebKit.framework    # 系统 SDK 框架必须用 sdk:，不能用 framework:

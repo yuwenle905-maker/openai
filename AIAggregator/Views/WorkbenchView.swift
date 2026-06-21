@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct WorkbenchView: View {
     @EnvironmentObject private var orchestrator: AIOrchestrator
