@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>AI 聚合</string>
+    <string>AI 聚合助手</string>
     <key>CFBundleIdentifier</key>
-    <string>com.yourname.AIAggregator</string>
+    <string>com.yourname.ai-aggregator</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
