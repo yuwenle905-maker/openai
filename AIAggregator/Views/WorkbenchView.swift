@@ -287,6 +287,7 @@ private struct MergedResponseCard: View {
 private struct TypingIndicator: View {
     let color: Color
     @State private var phase = 0
+    @State private var timer: Timer?
 
     var body: some View {
         HStack(spacing: 5) {
@@ -301,9 +302,13 @@ private struct TypingIndicator: View {
             }
         }
         .onAppear {
-            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
                 phase = (phase + 1) % 3
             }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
         }
     }
 }
@@ -338,7 +343,7 @@ private struct MergeButtonRow: View {
 
 private struct InputBar: View {
     @Binding var text: String
-    var isFocused: FocusState<Bool>.Binding
+    var isFocused: FocusState<Bool>.Binding   // 保留参数签名，此处不再使用键盘
     let isSending: Bool
     let onSend: () -> Void
 
@@ -347,59 +352,36 @@ private struct InputBar: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: DS.Space.sm) {
 
-            // ── 展开审阅按钮（键盘收起时也可点击）─────────────────────
+            // ── 点击即全屏撰写，不再弹系统键盘 ──────────────────────
             Button {
-                isFocused.wrappedValue = false
                 showCompose = true
             } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.Color.textSecondary)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle()
-                            .fill(DS.Color.bgInput)
-                            .overlay(Circle().strokeBorder(DS.Color.border, lineWidth: 1))
-                    )
-            }
-            .buttonStyle(.plain)
+                HStack(spacing: DS.Space.sm) {
+                    Group {
+                        if text.isEmpty {
+                            Text("点此处输入，全屏撰写与审阅...")
+                                .foregroundColor(DS.Color.textMuted)
+                        } else {
+                            Text(text)
+                                .foregroundColor(DS.Color.textPrimary)
+                                .lineLimit(2)
+                        }
+                    }
+                    .font(DS.Font.bodyLarge)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            // ── 输入框（1~4行自动扩展）──────────────────────────────
-            TextField("向双引擎提问...", text: $text, axis: .vertical)
-                .font(DS.Font.bodyLarge)
-                .foregroundColor(DS.Color.textPrimary)
-                .tint(DS.Color.cyan)
-                .lineLimit(1...4)
-                .focused(isFocused)
-                .padding(.horizontal, DS.Space.sm)
-                .padding(.vertical, 10)
-                .inputFieldStyle()
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        // 实时字数
-                        Text("\(text.count) 字")
-                            .font(DS.Font.labelSmall)
-                            .foregroundColor(DS.Color.textMuted)
-                        Spacer()
-                        // 全文审阅入口（键盘弹起时也可展开）
-                        Button {
-                            isFocused.wrappedValue = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                showCompose = true
-                            }
-                        } label: {
-                            Label("全文审阅", systemImage: "doc.text.magnifyingglass")
-                                .font(DS.Font.labelSmall)
-                                .foregroundColor(DS.Color.cyan)
-                        }
-                        // 完成（仅收键盘）
-                        Button("完成") {
-                            isFocused.wrappedValue = false
-                        }
-                        .font(DS.Font.titleMedium)
-                        .foregroundColor(DS.Color.cyan)
+                    // 有内容时显示编辑图标提示可再次打开撰写面板
+                    if !text.isEmpty {
+                        Image(systemName: "pencil.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(DS.Color.cyan.opacity(0.7))
                     }
                 }
+                .padding(.horizontal, DS.Space.sm)
+                .padding(.vertical, 12)
+                .inputFieldStyle()
+            }
+            .buttonStyle(.plain)
 
             // ── 发送按钮 ─────────────────────────────────────────
             Button(action: onSend) {

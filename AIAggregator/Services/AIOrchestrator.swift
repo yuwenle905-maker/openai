@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 
-/// 协调 DeepSeek + Gemini 双引擎并发查询与整合
 @MainActor
 final class AIOrchestrator: ObservableObject {
     @Published var deepSeekResponse: String = ""
@@ -19,7 +18,6 @@ final class AIOrchestrator: ObservableObject {
 
     // MARK: - Public
 
-    /// 并发向双端发送查询
     func send(query: String) async {
         deepSeekResponse = ""
         geminiResponse   = ""
@@ -27,13 +25,13 @@ final class AIOrchestrator: ObservableObject {
         isDeepSeekLoading = true
         isGeminiLoading   = true
 
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await self.webVM.sendToDeepSeek(query: query) }
-            group.addTask { await self.webVM.sendToGemini(query: query) }
-        }
+        // async let 在同一 actor 上并发执行两个异步任务，
+        // 避免 withTaskGroup + @MainActor 捕获导致的 Sendability 崩溃
+        async let ds: Void = webVM.sendToDeepSeek(query: query)
+        async let gm: Void = webVM.sendToGemini(query: query)
+        _ = await (ds, gm)
     }
 
-    /// 调用 Gemini 对两端回复进行二次整合
     func merge() async {
         guard !deepSeekResponse.isEmpty, !geminiResponse.isEmpty else { return }
         isMerging = true
@@ -44,31 +42,36 @@ final class AIOrchestrator: ObservableObject {
             geminiAnswer: geminiResponse
         )
         _ = try? await webVM.geminiWebView.evaluateJavaScript(script)
-        // 整合结果通过 WKScriptMessageHandler 回调写入 webVM.geminiReply
     }
 
     // MARK: - Private
 
     private func bindWebVM() {
+        // 用 Task { @MainActor in } 而非 .receive(on: DispatchQueue.main)
+        // 确保修改 @Published 属性时始终在 MainActor 上，不触发 actor 隔离崩溃
         webVM.$deepSeekReply
-            .receive(on: DispatchQueue.main)
+            .filter { !$0.isEmpty }
             .sink { [weak self] reply in
-                guard let self, !reply.isEmpty else { return }
-                self.deepSeekResponse  = reply
-                self.isDeepSeekLoading = false
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.deepSeekResponse  = reply
+                    self.isDeepSeekLoading = false
+                }
             }
             .store(in: &cancellables)
 
         webVM.$geminiReply
-            .receive(on: DispatchQueue.main)
+            .filter { !$0.isEmpty }
             .sink { [weak self] reply in
-                guard let self, !reply.isEmpty else { return }
-                if self.isMerging {
-                    self.mergedResponse = reply
-                    self.isMerging = false
-                } else {
-                    self.geminiResponse  = reply
-                    self.isGeminiLoading = false
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.isMerging {
+                        self.mergedResponse = reply
+                        self.isMerging      = false
+                    } else {
+                        self.geminiResponse  = reply
+                        self.isGeminiLoading = false
+                    }
                 }
             }
             .store(in: &cancellables)
