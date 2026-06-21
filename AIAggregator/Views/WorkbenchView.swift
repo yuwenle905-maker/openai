@@ -342,36 +342,66 @@ private struct InputBar: View {
     let isSending: Bool
     let onSend: () -> Void
 
+    @State private var showCompose = false
+
     var body: some View {
         HStack(alignment: .bottom, spacing: DS.Space.sm) {
+
+            // ── 展开审阅按钮（键盘收起时也可点击）─────────────────────
+            Button {
+                isFocused.wrappedValue = false
+                showCompose = true
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Color.textSecondary)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        Circle()
+                            .fill(DS.Color.bgInput)
+                            .overlay(Circle().strokeBorder(DS.Color.border, lineWidth: 1))
+                    )
+            }
+            .buttonStyle(.plain)
+
+            // ── 输入框（1~4行自动扩展）──────────────────────────────
             TextField("向双引擎提问...", text: $text, axis: .vertical)
                 .font(DS.Font.bodyLarge)
                 .foregroundColor(DS.Color.textPrimary)
                 .tint(DS.Color.cyan)
-                .lineLimit(1...5)
+                .lineLimit(1...4)
                 .focused(isFocused)
                 .padding(.horizontal, DS.Space.sm)
                 .padding(.vertical, 10)
                 .inputFieldStyle()
-                // ── 键盘工具栏：点"完成"收键盘，同时可审阅输入内容 ──────
                 .toolbar {
                     ToolbarItemGroup(placement: .keyboard) {
-                        // 字数统计，帮助用户检查输入
+                        // 实时字数
                         Text("\(text.count) 字")
                             .font(DS.Font.labelSmall)
                             .foregroundColor(DS.Color.textMuted)
                         Spacer()
+                        // 全文审阅入口（键盘弹起时也可展开）
                         Button {
                             isFocused.wrappedValue = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                showCompose = true
+                            }
                         } label: {
-                            Text("完成")
-                                .font(DS.Font.titleMedium)
+                            Label("全文审阅", systemImage: "doc.text.magnifyingglass")
+                                .font(DS.Font.labelSmall)
                                 .foregroundColor(DS.Color.cyan)
                         }
+                        // 完成（仅收键盘）
+                        Button("完成") {
+                            isFocused.wrappedValue = false
+                        }
+                        .font(DS.Font.titleMedium)
+                        .foregroundColor(DS.Color.cyan)
                     }
                 }
 
-            // 发送按钮（始终与输入框底部对齐）
+            // ── 发送按钮 ─────────────────────────────────────────
             Button(action: onSend) {
                 ZStack {
                     if isSending {
@@ -393,5 +423,149 @@ private struct InputBar: View {
         }
         .padding(.horizontal, DS.Space.md)
         .padding(.vertical, DS.Space.sm)
+        .sheet(isPresented: $showCompose) {
+            ComposeSheet(text: $text) {
+                showCompose = false
+                onSend()
+            }
+        }
+    }
+}
+
+// MARK: - Compose Sheet（全文撰写 & 审阅面板）
+
+private struct ComposeSheet: View {
+    @Binding var text: String
+    let onSend: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var editorFocused: Bool
+
+    // 实时统计
+    private var charCount: Int { text.count }
+    private var wordCount: Int {
+        text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.count
+    }
+    private var lineCount: Int {
+        max(1, text.components(separatedBy: "\n").count)
+    }
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                DS.Gradient.appBackground.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+
+                    // ── 统计信息栏 ──────────────────────────────────────
+                    HStack(spacing: DS.Space.lg) {
+                        StatBadge(value: charCount, label: "字")
+                        StatBadge(value: wordCount, label: "词")
+                        StatBadge(value: lineCount, label: "行")
+                        Spacer()
+                        // 清空按钮
+                        if !isEmpty {
+                            Button {
+                                withAnimation { text = "" }
+                            } label: {
+                                Label("清空", systemImage: "xmark.circle.fill")
+                                    .font(DS.Font.labelSmall)
+                                    .foregroundColor(DS.Color.error.opacity(0.8))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, DS.Space.md)
+                    .padding(.vertical, DS.Space.sm)
+                    .background(DS.Color.bgCard.opacity(0.6))
+
+                    Divider().background(DS.Color.border)
+
+                    // ── 全文可编辑区域 ─────────────────────────────────
+                    ScrollView {
+                        TextEditor(text: $text)
+                            .font(DS.Font.bodyLarge)
+                            .foregroundColor(DS.Color.textPrimary)
+                            .tint(DS.Color.cyan)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.clear)
+                            .focused($editorFocused)
+                            // 最小高度保证短文本时也有足够点击区域
+                            .frame(minHeight: 300)
+                            .padding(DS.Space.md)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+
+                    // ── 底部提示 ───────────────────────────────────────
+                    HStack {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Color.textMuted)
+                        Text("在此处检查错别字，确认无误后点击「发送」")
+                            .font(DS.Font.labelSmall)
+                            .foregroundColor(DS.Color.textMuted)
+                        Spacer()
+                    }
+                    .padding(.horizontal, DS.Space.md)
+                    .padding(.vertical, DS.Space.sm)
+                    .background(DS.Color.bgCard.opacity(0.4))
+                }
+            }
+            .navigationTitle("撰写 & 审阅")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(DS.Color.bgCard, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                        .foregroundColor(DS.Color.textSecondary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        guard !isEmpty else { return }
+                        onSend()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "paperplane.fill")
+                            Text("发送")
+                        }
+                        .font(DS.Font.titleMedium)
+                        .foregroundStyle(
+                            isEmpty
+                                ? AnyShapeStyle(DS.Color.textMuted)
+                                : AnyShapeStyle(DS.Gradient.sendButton)
+                        )
+                    }
+                    .disabled(isEmpty)
+                }
+            }
+        }
+        .onAppear {
+            // Sheet 展开后自动聚焦，光标定位到末尾方便补充内容
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                editorFocused = true
+            }
+        }
+    }
+}
+
+// MARK: - Stat Badge
+
+private struct StatBadge: View {
+    let value: Int
+    let label: String
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("\(value)")
+                .font(DS.Font.titleMedium)
+                .foregroundStyle(DS.Gradient.sendButton)
+            Text(label)
+                .font(DS.Font.labelSmall)
+                .foregroundColor(DS.Color.textSecondary)
+        }
     }
 }
