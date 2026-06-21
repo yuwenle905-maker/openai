@@ -26,7 +26,7 @@ targets:
       path: AIAggregator/App/Info.plist   # XcodeGen 读取此文件，自动设置 INFOPLIST_FILE
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.ai-aggregator
+        PRODUCT_BUNDLE_IDENTIFIER: com.yuwenle905maker.ai-aggregator
         SWIFT_OPTIMIZATION_LEVEL: "-Onone"
         # 不再手写 INFOPLIST_FILE，由上方 info.path 自动注入
     dependencies:
