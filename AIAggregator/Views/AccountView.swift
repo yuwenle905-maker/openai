@@ -2,8 +2,11 @@ import SwiftUI
 import WebKit
 
 struct AccountView: View {
-    @EnvironmentObject private var orchestrator: AIOrchestrator
     @State private var selectedPlatform: ViewPlatform = .deepSeek
+
+    // 两个独立 WKWebView，用 @StateObject 保证只创建一次
+    @StateObject private var dsHolder = PlatformWebHolder(urlString: "https://chat.deepseek.com")
+    @StateObject private var gmHolder = PlatformWebHolder(urlString: "https://gemini.google.com")
 
     enum ViewPlatform: String, CaseIterable {
         case deepSeek = "DeepSeek"
@@ -15,14 +18,12 @@ struct AccountView: View {
             case .gemini:   return DS.Color.gemini
             }
         }
-
         var gradient: LinearGradient {
             switch self {
             case .deepSeek: return DS.Gradient.deepSeekAccent
             case .gemini:   return DS.Gradient.geminiAccent
             }
         }
-
         var icon: String {
             switch self {
             case .deepSeek: return "sparkles"
@@ -42,12 +43,17 @@ struct AccountView: View {
                     PlatformSegmentPicker(selected: $selectedPlatform)
                         .padding(DS.Space.md)
 
-                    // 复用 orchestrator 里的 WebView，避免第 3 个 WKWebView
-                    ExistingWebViewContainer(
-                        webView: selectedPlatform == .deepSeek
-                            ? orchestrator.deepSeekWebView
-                            : orchestrator.geminiWebView
-                    )
+                    // ZStack + opacity：两个 WebView 永远都在视图层级里，
+                    // 切换时只改透明度，完全不做 add/remove/swap，杜绝 UIKit 崩溃
+                    ZStack {
+                        PlatformWebViewPanel(holder: dsHolder)
+                            .opacity(selectedPlatform == .deepSeek ? 1 : 0)
+                            .allowsHitTesting(selectedPlatform == .deepSeek)
+
+                        PlatformWebViewPanel(holder: gmHolder)
+                            .opacity(selectedPlatform == .gemini ? 1 : 0)
+                            .allowsHitTesting(selectedPlatform == .gemini)
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: DS.Radius.md))
                     .padding(.horizontal, DS.Space.md)
                     .padding(.bottom, 80 + DS.Space.md)
@@ -58,11 +64,51 @@ struct AccountView: View {
                             .padding(.horizontal, DS.Space.md)
                     }
                     .shadow(color: selectedPlatform.color.opacity(0.2), radius: 16, x: 0, y: 6)
-                    .animation(.easeInOut(duration: 0.3), value: selectedPlatform)
                 }
             }
         }
     }
+}
+
+// MARK: - PlatformWebHolder
+// 持有单个平台的 WKWebView，@MainActor 保证主线程初始化
+
+@MainActor
+final class PlatformWebHolder: NSObject, ObservableObject {
+    let webView: WKWebView
+
+    init(urlString: String) {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        config.allowsInlineMediaPlayback = true
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.allowsBackForwardNavigationGestures = true
+        wv.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        self.webView = wv
+        super.init()
+        wv.navigationDelegate = self
+        if let url = URL(string: urlString) {
+            wv.load(URLRequest(url: url))
+        }
+    }
+}
+
+extension PlatformWebHolder: WKNavigationDelegate {
+    nonisolated func webView(_ webView: WKWebView,
+                             decidePolicyFor action: WKNavigationAction,
+                             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(.allow)
+    }
+}
+
+// MARK: - PlatformWebViewPanel
+// 把 WKWebView 固定放入 UIKit 层；只做 makeUIView，永不 swap
+
+private struct PlatformWebViewPanel: UIViewRepresentable {
+    let holder: PlatformWebHolder
+
+    func makeUIView(context: Context) -> WKWebView { holder.webView }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
 // MARK: - Nav Bar
@@ -103,9 +149,7 @@ private struct PlatformSegmentPicker: View {
         HStack(spacing: DS.Space.sm) {
             ForEach(AccountView.ViewPlatform.allCases, id: \.self) { platform in
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        selected = platform
-                    }
+                    selected = platform          // 无动画，避免 WKWebView 快照崩溃
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: platform.icon)

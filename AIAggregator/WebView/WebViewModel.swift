@@ -30,17 +30,27 @@ final class WebViewModel: NSObject, ObservableObject {
     }
 
     // MARK: - 公开 API
+    // 使用 completion handler 版 evaluateJavaScript，避免 async 版本在
+    // 某些 WebView 状态下抛出 ObjC NSException（Swift try? 无法捕获）
 
-    func sendToDeepSeek(query: String) async {
+    func sendToDeepSeek(query: String) {
         isDeepSeekBusy = true
         deepSeekReply  = ""
-        await inject(query: query, into: deepSeekWebView, platform: .deepSeek)
+        let script = JSBridge.buildInputScript(query: query, platform: .deepSeek)
+        deepSeekWebView.evaluateJavaScript(script) { [weak self] _, error in
+            if let error { print("[WVM] DeepSeek JS error: \(error)") }
+            self?.isDeepSeekBusy = false
+        }
     }
 
-    func sendToGemini(query: String) async {
+    func sendToGemini(query: String) {
         isGeminiBusy = true
         geminiReply  = ""
-        await inject(query: query, into: geminiWebView, platform: .gemini)
+        let script = JSBridge.buildInputScript(query: query, platform: .gemini)
+        geminiWebView.evaluateJavaScript(script) { [weak self] _, error in
+            if let error { print("[WVM] Gemini JS error: \(error)") }
+            self?.isGeminiBusy = false
+        }
     }
 
     // MARK: - 私有：预热
@@ -89,11 +99,13 @@ final class WebViewModel: NSObject, ObservableObject {
         return wv
     }
 
-    // MARK: - 私有：JS 注入
-
-    private func inject(query: String, into webView: WKWebView, platform: AIPlatform) async {
-        let script = JSBridge.buildInputScript(query: query, platform: platform)
-        _ = try? await webView.evaluateJavaScript(script)
+    // pageReadyCheck 同样用 completion handler
+    func checkPageReady(platform: AIPlatform) {
+        let wv = platform == .deepSeek ? deepSeekWebView : geminiWebView
+        let script = JSBridge.pageReadyCheckScript(platform: platform)
+        wv.evaluateJavaScript(script) { _, error in
+            if let error { print("[WVM] readyCheck error: \(error)") }
+        }
     }
 }
 
@@ -155,15 +167,11 @@ extension WebViewModel: WKScriptMessageHandler {
 extension WebViewModel: WKNavigationDelegate {
 
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        Task { @MainActor [weak self] in
+        // 延迟 2 秒等 React SPA 渲染完成，然后用 completion handler 版做就绪检测
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self else { return }
             let platform: AIPlatform = (webView === self.deepSeekWebView) ? .deepSeek : .gemini
-
-            // React SPA 通常在 DOMContentLoaded 后继续渲染，等待 2 秒再检测
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-
-            let readyScript = JSBridge.pageReadyCheckScript(platform: platform)
-            _ = try? await webView.evaluateJavaScript(readyScript)
+            self.checkPageReady(platform: platform)
         }
     }
 

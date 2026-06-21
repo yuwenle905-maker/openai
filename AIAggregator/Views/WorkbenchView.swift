@@ -89,7 +89,7 @@ struct WorkbenchView: View {
         VStack(spacing: 0) {
             if showMergeButton {
                 MergeButtonRow(isMerging: orchestrator.isMerging) {
-                    Task { await orchestrator.merge() }
+                    orchestrator.merge()
                 }
                 .padding(.horizontal, DS.Space.md)
                 .padding(.top, DS.Space.sm)

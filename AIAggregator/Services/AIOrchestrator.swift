@@ -30,28 +30,24 @@ final class AIOrchestrator: ObservableObject {
         isDeepSeekLoading = true
         isGeminiLoading   = true
 
-        // 各自独立的 MainActor Task，完全避免 async let / withTaskGroup
-        // 的 Sendability 问题；状态由 Combine 绑定在回复到达时更新
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.webVM.sendToDeepSeek(query: query)
-        }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.webVM.sendToGemini(query: query)
-        }
+        // sendToDeepSeek/Gemini 现在是同步方法（内部用 completion handler）
+        // 直接调用，零 async/await，彻底消除并发崩溃风险
+        webVM.sendToDeepSeek(query: query)
+        webVM.sendToGemini(query: query)
     }
 
-    func merge() async {
+    func merge() {
         guard !deepSeekResponse.isEmpty, !geminiResponse.isEmpty else { return }
         isMerging = true
         mergedResponse = ""
-
         let script = JSBridge.buildMergeScript(
             deepSeekAnswer: deepSeekResponse,
             geminiAnswer: geminiResponse
         )
-        _ = try? await webVM.geminiWebView.evaluateJavaScript(script)
+        webVM.geminiWebView.evaluateJavaScript(script) { [weak self] _, error in
+            if let error { print("[Orchestrator] merge error: \(error)") }
+            self?.isMerging = false
+        }
     }
 
     // MARK: - Private
