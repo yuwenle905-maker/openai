@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import WebKit
 
 @MainActor
 final class AIOrchestrator: ObservableObject {
@@ -13,6 +14,10 @@ final class AIOrchestrator: ObservableObject {
 
     private let webVM = WebViewModel()
     private var cancellables = Set<AnyCancellable>()
+
+    // AccountView 通过这两个属性复用同一对 WebView，避免创建第 3 个
+    var deepSeekWebView: WKWebView { webVM.deepSeekWebView }
+    var geminiWebView:   WKWebView { webVM.geminiWebView }
 
     init() { bindWebVM() }
 

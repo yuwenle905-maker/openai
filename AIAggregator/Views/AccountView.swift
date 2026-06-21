@@ -2,18 +2,12 @@ import SwiftUI
 import WebKit
 
 struct AccountView: View {
-    @State private var selectedPlatform: AIPlatform = .deepSeek
+    @EnvironmentObject private var orchestrator: AIOrchestrator
+    @State private var selectedPlatform: ViewPlatform = .deepSeek
 
-    enum AIPlatform: String, CaseIterable {
+    enum ViewPlatform: String, CaseIterable {
         case deepSeek = "DeepSeek"
         case gemini   = "Gemini"
-
-        var url: URL {
-            switch self {
-            case .deepSeek: return URL(string: "https://chat.deepseek.com")!
-            case .gemini:   return URL(string: "https://gemini.google.com")!
-            }
-        }
 
         var color: Color {
             switch self {
@@ -43,27 +37,28 @@ struct AccountView: View {
                 DS.Gradient.appBackground.ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    // 导航栏
                     AccountNavBar()
 
-                    // 平台切换 Segment
                     PlatformSegmentPicker(selected: $selectedPlatform)
                         .padding(DS.Space.md)
 
-                    // WebView 容器
-                    WebViewContainer(url: selectedPlatform.url)
-                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.md))
-                        .padding(.horizontal, DS.Space.md)
-                        .padding(.bottom, 80 + DS.Space.md)
-                        .overlay(alignment: .top) {
-                            // 顶部高光条
-                            RoundedRectangle(cornerRadius: DS.Radius.md)
-                                .fill(selectedPlatform.gradient)
-                                .frame(height: 2)
-                                .padding(.horizontal, DS.Space.md)
-                        }
-                        .shadow(color: selectedPlatform.color.opacity(0.2), radius: 16, x: 0, y: 6)
-                        .animation(.easeInOut(duration: 0.3), value: selectedPlatform)
+                    // 复用 orchestrator 里的 WebView，避免第 3 个 WKWebView
+                    ExistingWebViewContainer(
+                        webView: selectedPlatform == .deepSeek
+                            ? orchestrator.deepSeekWebView
+                            : orchestrator.geminiWebView
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.md))
+                    .padding(.horizontal, DS.Space.md)
+                    .padding(.bottom, 80 + DS.Space.md)
+                    .overlay(alignment: .top) {
+                        RoundedRectangle(cornerRadius: DS.Radius.md)
+                            .fill(selectedPlatform.gradient)
+                            .frame(height: 2)
+                            .padding(.horizontal, DS.Space.md)
+                    }
+                    .shadow(color: selectedPlatform.color.opacity(0.2), radius: 16, x: 0, y: 6)
+                    .animation(.easeInOut(duration: 0.3), value: selectedPlatform)
                 }
             }
         }
@@ -102,11 +97,11 @@ private struct AccountNavBar: View {
 // MARK: - Platform Segment Picker
 
 private struct PlatformSegmentPicker: View {
-    @Binding var selected: AccountView.AIPlatform
+    @Binding var selected: AccountView.ViewPlatform
 
     var body: some View {
         HStack(spacing: DS.Space.sm) {
-            ForEach(AccountView.AIPlatform.allCases, id: \.self) { platform in
+            ForEach(AccountView.ViewPlatform.allCases, id: \.self) { platform in
                 Button {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         selected = platform

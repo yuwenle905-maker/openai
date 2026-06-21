@@ -38,3 +38,13 @@ struct WebViewContainer: UIViewRepresentable {
         }
     }
 }
+
+// MARK: - ExistingWebViewContainer
+// 包装一个已存在的 WKWebView 实例（不新建），供 AccountView 展示 WebViewModel 里的 WebView。
+// 这样全 App 只有 2 个 WKWebView，避免内存溢出崩溃。
+struct ExistingWebViewContainer: UIViewRepresentable {
+    let webView: WKWebView
+
+    func makeUIView(context: Context) -> WKWebView { webView }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}

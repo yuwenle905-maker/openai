@@ -79,6 +79,7 @@ final class WebViewModel: NSObject, ObservableObject {
 
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = self
+        wv.uiDelegate = self
         // 使用桌面 UA，防止网站限制功能
         wv.customUserAgent = """
         Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
@@ -181,6 +182,41 @@ extension WebViewModel: WKNavigationDelegate {
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
         decisionHandler(.allow)
+    }
+}
+
+// MARK: - WKUIDelegate（处理登录页弹窗、OAuth 新窗口）
+
+extension WebViewModel: WKUIDelegate {
+    nonisolated func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // 把 window.open() 跳转在当前 WebView 内打开，避免白屏
+        if let url = navigationAction.request.url {
+            Task { @MainActor in webView.load(URLRequest(url: url)) }
+        }
+        return nil
+    }
+
+    nonisolated func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping () -> Void
+    ) {
+        completionHandler()
+    }
+
+    nonisolated func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        completionHandler(true)
     }
 }
 
