@@ -92,10 +92,11 @@ final class WebViewModel: NSObject, ObservableObject {
         controller.addUserScript(listenerScript)
         config.userContentController = controller
 
-        let wv = WKWebView(frame: .zero, configuration: config)
+        // 给后台 WebView 一个非零视口：frame:.zero 会让 window.innerWidth/Height=0，
+        // React 的懒渲染可能因此不挂载按钮等组件
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
         wv.navigationDelegate = self
         wv.uiDelegate = self
-        // 单行桌面 Safari UA，避免多行拼接引入空格或换行导致网站降级
         wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         return wv
     }

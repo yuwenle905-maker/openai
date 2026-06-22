@@ -22,13 +22,16 @@ enum JSBridge {
                     + ' cls=' + (el.className || '').substring(0,30) + '\\n';
             });
 
-            var btns = document.querySelectorAll('button');
-            report += '按钮(' + btns.length + '):\\n';
+            // button + role=button + input[type=submit
+            var btns = document.querySelectorAll('button, [role="button"], input[type="submit"]');
+            report += '可点击元素(' + btns.length + ') [button=' + document.querySelectorAll('button').length + ' role-btn=' + document.querySelectorAll('[role="button"]').length + ']:\\n';
             var n = 0;
             btns.forEach(function(b) {
-                if (n++ >= 8) return;
-                var dis = b.disabled ? '[禁]' : '[可]';
+                if (n++ >= 10) return;
+                var dis = (b.disabled || b.getAttribute('aria-disabled')==='true') ? '[禁]' : '[可]';
                 report += '  ' + dis
+                    + ' ' + b.tagName
+                    + ' role=' + (b.getAttribute('role')||'-')
                     + ' type=' + (b.type||'-')
                     + ' aria="' + (b.getAttribute('aria-label')||'').substring(0,20) + '"'
                     + ' txt="' + (b.textContent||'').trim().substring(0,15) + '"'
@@ -300,25 +303,46 @@ enum JSBridge {
                 function trySend(el, round) {
                     var vw = window.innerWidth, vh = window.innerHeight;
 
-                    // 策略A：Enter键（keydown + keypress + keyup）→ 输入框 + body
+                    // ── 策略A：确保焦点在输入框，光标在末尾 ──────────
+                    el.focus();
+                    if (el.setSelectionRange) {
+                        el.setSelectionRange(el.value.length, el.value.length);
+                    }
+
+                    // ── 策略B：Enter键（keydown + keypress + keyup）──
                     function fireEnter(target) {
-                        var o = { bubbles:true, cancelable:true, key:'Enter', code:'Enter', keyCode:13, which:13 };
+                        var o = { bubbles:true, cancelable:true, key:'Enter', code:'Enter', keyCode:13, which:13, composed:true };
                         target.dispatchEvent(new KeyboardEvent('keydown',  o));
                         target.dispatchEvent(new KeyboardEvent('keypress', o));
                         target.dispatchEvent(new KeyboardEvent('keyup',    o));
                     }
                     fireEnter(el);
-                    fireEnter(document.body);
 
-                    // 策略B：全页面按钮评分点击
+                    // ── 策略C：Form submit（最可靠，绕过按钮查找）────
+                    var form = (typeof el.closest === 'function') ? el.closest('form') : null;
+                    if (form) {
+                        if (typeof form.requestSubmit === 'function') {
+                            form.requestSubmit();
+                            post(DBG, '第' + round + '轮 form.requestSubmit()');
+                        } else {
+                            form.dispatchEvent(new Event('submit', { bubbles:true, cancelable:true }));
+                        }
+                    } else {
+                        post(DBG, '第' + round + '轮 无form，vw=' + vw + ' vh=' + vh);
+                    }
+
+                    // ── 策略D：广谱可点击元素评分（包括 role=button/div/span）
                     var best = null, bestScore = -1;
-                    document.querySelectorAll('button').forEach(function(b) {
-                        if (b.disabled) return;
+                    var selector = 'button, [role="button"], input[type="submit"], ' +
+                                   '[class*="send"], [class*="Send"], [class*="submit"]';
+                    document.querySelectorAll(selector).forEach(function(b) {
+                        if (b.disabled || b.getAttribute('aria-disabled') === 'true') return;
                         var s = 0;
-                        var aria = (b.getAttribute('aria-label')||'').toLowerCase();
-                        var cls  = (b.className||'').toLowerCase();
-                        var txt  = (b.textContent||'').trim().toLowerCase();
-                        if (b.type === 'submit') s += 10;
+                        var aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                        var cls  = (b.className || '').toLowerCase();
+                        var txt  = (b.textContent || '').trim().toLowerCase();
+                        var typ  = (b.type || b.getAttribute('type') || '').toLowerCase();
+                        if (typ === 'submit') s += 10;
                         if (aria.includes('send') || aria.includes('发送')) s += 8;
                         if (txt === '发送' || txt === 'send') s += 7;
                         if (cls.includes('send') || cls.includes('submit')) s += 6;
@@ -329,21 +353,26 @@ enum JSBridge {
                         best.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, cancelable:true }));
                         best.dispatchEvent(new MouseEvent('mouseup',   { bubbles:true, cancelable:true }));
                         best.click();
-                        post(DBG, '第' + round + '轮按钮点击: ' + (best.getAttribute('aria-label')||best.textContent||'').substring(0,20));
+                        post(DBG, '第' + round + '轮元素点击: tag=' + best.tagName + ' role=' + (best.getAttribute('role')||'-') + ' aria="' + (best.getAttribute('aria-label')||'').substring(0,20) + '"');
                     } else {
-                        post(DBG, '第' + round + '轮无可用按钮（总=' + document.querySelectorAll('button').length + '），用Enter+坐标');
+                        // 上报页面里所有 role=button 元素数，帮助调试
+                        var rolebtns = document.querySelectorAll('[role="button"]').length;
+                        var allbtns  = document.querySelectorAll('button').length;
+                        post(DBG, '第' + round + '轮无可点击元素: button=' + allbtns + ' role-button=' + rolebtns);
                     }
 
-                    // 策略C：坐标点击（DeepSeek发送按钮通常在右下角）
-                    function clickAt(x, y) {
-                        var t = document.elementFromPoint(x, y);
-                        if (!t) return;
-                        t.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window }));
-                        t.dispatchEvent(new MouseEvent('mouseup',   { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window }));
-                        t.dispatchEvent(new MouseEvent('click',     { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window }));
+                    // ── 策略E：坐标点击（依赖 vw/vh 非零）────────────
+                    if (vw > 0 && vh > 0) {
+                        function clickAt(x, y) {
+                            var t = document.elementFromPoint(x, y);
+                            if (!t) return;
+                            t.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window }));
+                            t.dispatchEvent(new MouseEvent('mouseup',   { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window }));
+                            t.dispatchEvent(new MouseEvent('click',     { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window }));
+                        }
+                        clickAt(vw - 44, vh - 88);
+                        clickAt(vw - 44, vh - 130);
                     }
-                    clickAt(vw - 44, vh - 88);
-                    clickAt(vw - 44, vh - 130);
 
                     // 500ms后检查是否清空
                     setTimeout(function() {
