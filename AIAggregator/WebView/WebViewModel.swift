@@ -121,41 +121,41 @@ extension WebViewModel: WKScriptMessageHandler {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            print("[WVM] 收到数据流片段，通道=\(message.name)，内容长度=\(body.count)，当前状态：DS忙=\(self.isDeepSeekBusy) GM忙=\(self.isGeminiBusy)")
 
             switch message.name {
 
             // ── 正常回复 ──────────────────────────────────────────
             case AIPlatform.deepSeek.messageHandler:
+                print("[WVM] ✅ DeepSeek 回复，长度=\(body.count)")
                 self.deepSeekReply  = body
                 self.isDeepSeekBusy = false
 
             case AIPlatform.gemini.messageHandler:
+                print("[WVM] ✅ Gemini 回复，长度=\(body.count)")
                 self.geminiReply  = body
                 self.isGeminiBusy = false
 
             // ── 就绪检测结果 ──────────────────────────────────────
             case "\(AIPlatform.deepSeek.messageHandler)_ready":
                 self.deepSeekIsReady = (body == "true")
-                if !self.deepSeekIsReady {
-                    print("[WebViewModel] DeepSeek isReady=false — 详情见浏览器控制台 console.warn")
-                }
+                print("[WVM] DeepSeek isReady=\(body)")
 
             case "\(AIPlatform.gemini.messageHandler)_ready":
                 self.geminiIsReady = (body == "true")
-                if !self.geminiIsReady {
-                    print("[WebViewModel] Gemini isReady=false — 详情见浏览器控制台 console.warn")
-                }
+                print("[WVM] Gemini isReady=\(body)")
 
             // ── 错误回调 ──────────────────────────────────────────
             case "\(AIPlatform.deepSeek.messageHandler)_error":
-                print("[WebViewModel] DeepSeek JS 错误: \(body)")
+                print("[WVM] ❌ DeepSeek JS 错误: \(body)")
                 self.isDeepSeekBusy = false
 
             case "\(AIPlatform.gemini.messageHandler)_error":
-                print("[WebViewModel] Gemini JS 错误: \(body)")
+                print("[WVM] ❌ Gemini JS 错误: \(body)")
                 self.isGeminiBusy = false
 
             default:
+                print("[WVM] ⚠️ 未知通道: \(message.name)")
                 break
             }
         }

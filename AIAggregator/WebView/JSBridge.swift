@@ -61,6 +61,10 @@ enum JSBridge {
     }
 
     // MARK: - 2. 全局回复监听脚本（WKUserScript，atDocumentEnd 注入）
+    //
+    // 核心策略：防抖（debounce）而非 CSS class 检测
+    // 原因：流式输出结束无法依赖特定 CSS class（版本迭代后 class 名会变），
+    // 但"1.5 秒内没有新 DOM 变化"是平台无关的可靠信号。
 
     static func globalListenerScript(platform: AIPlatform) -> String {
         let handler = platform.messageHandler
@@ -71,30 +75,57 @@ enum JSBridge {
             (function() {
                 if (window.__dsListenerActive) return;
                 window.__dsListenerActive = true;
-                window.__dsObserver = null;
 
                 window.__startDSListener = function() {
-                    if (window.__dsObserver) window.__dsObserver.disconnect();
-                    console.log('[DSListener] 开始监听回复');
-                    window.__dsObserver = new MutationObserver(function() {
-                        var msgs = document.querySelectorAll(
-                            '[class*="message-content"], [class*="ds-markdown"], [class*="markdown"]'
+                    // 清理上一次的状态
+                    if (window.__dsObserver)  { window.__dsObserver.disconnect(); }
+                    clearTimeout(window.__dsDebounce);
+                    clearTimeout(window.__dsMaxTimer);
+                    window.__dsSent = false;
+
+                    function getReply() {
+                        // 广谱选择器：取页面内所有 markdown/回复容器的最后一个
+                        var candidates = document.querySelectorAll(
+                            '[class*="ds-markdown"], [class*="markdown"], ' +
+                            '[class*="message-content"], [class*="assistant"], ' +
+                            '[class*="response"], [class*="reply"]'
                         );
-                        var last = msgs[msgs.length - 1];
-                        if (!last || last.innerText.trim().length < 5) return;
-                        var text = last.innerText.trim();
-                        var streaming = !!document.querySelector(
-                            '[class*="thinking"], [class*="loading"], .ds-cursor, [class*="generating"]'
-                        );
-                        if (!streaming) {
-                            console.log('[DSListener] 回复完成，长度=' + text.length);
-                            window.__dsObserver.disconnect();
-                            window.webkit.messageHandlers.\(handler).postMessage(text);
+                        var last = candidates[candidates.length - 1];
+                        return last ? last.innerText.trim() : '';
+                    }
+
+                    function tryPost() {
+                        if (window.__dsSent) return;
+                        var text = getReply();
+                        if (text.length < 5) {
+                            console.log('[DSListener] 内容过短（' + text.length + '），继续等待');
+                            return;
                         }
+                        window.__dsSent = true;
+                        if (window.__dsObserver) window.__dsObserver.disconnect();
+                        clearTimeout(window.__dsMaxTimer);
+                        console.log('[DSListener] 防抖触发，回复长度=' + text.length + '，发送');
+                        window.webkit.messageHandlers.\(handler).postMessage(text);
+                    }
+
+                    window.__dsObserver = new MutationObserver(function() {
+                        // 每次 DOM 变化重置 1.5 秒计时器
+                        clearTimeout(window.__dsDebounce);
+                        window.__dsDebounce = setTimeout(tryPost, 1500);
                     });
                     window.__dsObserver.observe(document.body, {
                         childList: true, subtree: true, characterData: true
                     });
+
+                    // 90 秒硬超时兜底，防止永久卡住
+                    window.__dsMaxTimer = setTimeout(function() {
+                        if (!window.__dsSent) {
+                            console.log('[DSListener] 90s 硬超时，强制发送');
+                            tryPost();
+                        }
+                    }, 90000);
+
+                    console.log('[DSListener] 开始监听（防抖模式），等待回复...');
                 };
             })();
             """
@@ -104,30 +135,53 @@ enum JSBridge {
             (function() {
                 if (window.__gmListenerActive) return;
                 window.__gmListenerActive = true;
-                window.__gmObserver = null;
 
                 window.__startGMListener = function() {
-                    if (window.__gmObserver) window.__gmObserver.disconnect();
-                    console.log('[GMListener] 开始监听回复');
-                    window.__gmObserver = new MutationObserver(function() {
-                        var msgs = document.querySelectorAll(
-                            'model-response, message-content, [class*="response-content"], .model-response-text'
+                    if (window.__gmObserver)  { window.__gmObserver.disconnect(); }
+                    clearTimeout(window.__gmDebounce);
+                    clearTimeout(window.__gmMaxTimer);
+                    window.__gmSent = false;
+
+                    function getReply() {
+                        var candidates = document.querySelectorAll(
+                            'model-response, message-content, ' +
+                            '[class*="response-content"], [class*="model-response"], ' +
+                            '[class*="assistant"], .response-container'
                         );
-                        var last = msgs[msgs.length - 1];
-                        if (!last || last.innerText.trim().length < 5) return;
-                        var thinking = document.querySelector(
-                            '[aria-label*="thinking"], [aria-label*="Generating"], [class*="loading-indicator"], .thinking-indicator'
-                        );
-                        if (!thinking) {
-                            var text = last.innerText.trim();
-                            console.log('[GMListener] 回复完成，长度=' + text.length);
-                            window.__gmObserver.disconnect();
-                            window.webkit.messageHandlers.\(handler).postMessage(text);
+                        var last = candidates[candidates.length - 1];
+                        return last ? last.innerText.trim() : '';
+                    }
+
+                    function tryPost() {
+                        if (window.__gmSent) return;
+                        var text = getReply();
+                        if (text.length < 5) {
+                            console.log('[GMListener] 内容过短（' + text.length + '），继续等待');
+                            return;
                         }
+                        window.__gmSent = true;
+                        if (window.__gmObserver) window.__gmObserver.disconnect();
+                        clearTimeout(window.__gmMaxTimer);
+                        console.log('[GMListener] 防抖触发，回复长度=' + text.length + '，发送');
+                        window.webkit.messageHandlers.\(handler).postMessage(text);
+                    }
+
+                    window.__gmObserver = new MutationObserver(function() {
+                        clearTimeout(window.__gmDebounce);
+                        window.__gmDebounce = setTimeout(tryPost, 1500);
                     });
                     window.__gmObserver.observe(document.body, {
                         childList: true, subtree: true, characterData: true
                     });
+
+                    window.__gmMaxTimer = setTimeout(function() {
+                        if (!window.__gmSent) {
+                            console.log('[GMListener] 90s 硬超时，强制发送');
+                            tryPost();
+                        }
+                    }, 90000);
+
+                    console.log('[GMListener] 开始监听（防抖模式），等待回复...');
                 };
             })();
             """

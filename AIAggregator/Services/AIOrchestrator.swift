@@ -14,8 +14,8 @@ final class AIOrchestrator: ObservableObject {
 
     private let webVM = WebViewModel()
     private var cancellables = Set<AnyCancellable>()
+    private var mergeTimeoutWork: DispatchWorkItem?
 
-    // AccountView 通过这两个属性复用同一对 WebView，避免创建第 3 个
     var deepSeekWebView: WKWebView { webVM.deepSeekWebView }
     var geminiWebView:   WKWebView { webVM.geminiWebView }
 
@@ -29,9 +29,6 @@ final class AIOrchestrator: ObservableObject {
         mergedResponse    = ""
         isDeepSeekLoading = true
         isGeminiLoading   = true
-
-        // sendToDeepSeek/Gemini 现在是同步方法（内部用 completion handler）
-        // 直接调用，零 async/await，彻底消除并发崩溃风险
         webVM.sendToDeepSeek(query: query)
         webVM.sendToGemini(query: query)
     }
@@ -40,44 +37,60 @@ final class AIOrchestrator: ObservableObject {
         guard !deepSeekResponse.isEmpty, !geminiResponse.isEmpty else { return }
         isMerging = true
         mergedResponse = ""
+
         let script = JSBridge.buildMergeScript(
             deepSeekAnswer: deepSeekResponse,
             geminiAnswer: geminiResponse
         )
-        webVM.geminiWebView.evaluateJavaScript(script) { [weak self] _, error in
-            if let error { print("[Orchestrator] merge error: \(error)") }
-            self?.isMerging = false
+
+        // evaluateJavaScript 的 completion 是 JS「注入完成」回调，
+        // 不是 Gemini「回答完成」回调，绝对不能在这里 isMerging = false。
+        // isMerging 的重置由 Combine 绑定在 geminiReply 到达时处理。
+        webVM.geminiWebView.evaluateJavaScript(script) { _, error in
+            if let error { print("[Orchestrator] merge 注入错误: \(error)") }
         }
+
+        // 120 秒硬超时：防止整合永久卡住
+        mergeTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isMerging else { return }
+            print("[Orchestrator] merge 120s 超时，强制重置")
+            self.isMerging = false
+        }
+        mergeTimeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: work)
     }
 
     // MARK: - Private
 
     private func bindWebVM() {
-        // 用 Task { @MainActor in } 而非 .receive(on: DispatchQueue.main)
-        // 确保修改 @Published 属性时始终在 MainActor 上，不触发 actor 隔离崩溃
+        // deepSeekReply 到达 → 更新 deepSeekResponse，清除加载态
         webVM.$deepSeekReply
             .filter { !$0.isEmpty }
+            .receive(on: RunLoop.main)
             .sink { [weak self] reply in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.deepSeekResponse  = reply
-                    self.isDeepSeekLoading = false
-                }
+                guard let self else { return }
+                print("[Orchestrator] ✅ DeepSeek 回复到达，长度=\(reply.count)")
+                self.deepSeekResponse  = reply
+                self.isDeepSeekLoading = false
             }
             .store(in: &cancellables)
 
+        // geminiReply 到达 → 普通回复 or 整合回复，取决于 isMerging
         webVM.$geminiReply
             .filter { !$0.isEmpty }
+            .receive(on: RunLoop.main)
             .sink { [weak self] reply in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if self.isMerging {
-                        self.mergedResponse = reply
-                        self.isMerging      = false
-                    } else {
-                        self.geminiResponse  = reply
-                        self.isGeminiLoading = false
-                    }
+                guard let self else { return }
+                if self.isMerging {
+                    print("[Orchestrator] ✅ 整合回复到达，长度=\(reply.count)")
+                    self.mergedResponse = reply
+                    self.isMerging      = false
+                    self.mergeTimeoutWork?.cancel()
+                } else {
+                    print("[Orchestrator] ✅ Gemini 回复到达，长度=\(reply.count)")
+                    self.geminiResponse  = reply
+                    self.isGeminiLoading = false
                 }
             }
             .store(in: &cancellables)
