@@ -105,6 +105,7 @@ enum JSBridge {
 
                     window.__dsObserver = new MutationObserver(function() {
                         var len = getReply().length;
+                        window.__dsReplyLen = len;   // trySend 用于判断"回复是否已开始"
                         console.log('[DS-DOM] changed len=' + len);
                         clearTimeout(window.__dsDebounce);
                         window.__dsDebounce = setTimeout(function() { tryPost('debounce'); }, 1500);
@@ -180,6 +181,7 @@ enum JSBridge {
 
                     window.__gmObserver = new MutationObserver(function() {
                         var len = getReply().length;
+                        window.__gmReplyLen = len;
                         console.log('[GM-DOM] changed len=' + len);
                         clearTimeout(window.__gmDebounce);
                         window.__gmDebounce = setTimeout(function() { tryPost('debounce'); }, 1500);
@@ -374,19 +376,29 @@ enum JSBridge {
                         clickAt(vw - 44, vh - 130);
                     }
 
-                    // 500ms后检查是否清空
+                    // 800ms 后检查发送成功的两个信号（任一满足即视为成功）：
+                    // 1. 输入框被清空（最理想）
+                    // 2. 回复区已出现文本（DeepSeek 收到请求并开始回答）
+                    // 两个信号都没有才重试，最多4轮后仅警告不阻塞
                     setTimeout(function() {
-                        var remaining = (el.value || '').trim().length;
-                        if (remaining === 0) {
-                            post(DBG, '✓ 第' + round + '轮发送成功，输入框已清空');
+                        var remaining  = (el.value || '').trim().length;
+                        var replyLen   = window.__dsReplyLen || 0;
+                        var cleared    = remaining === 0;
+                        var replyStarted = replyLen > 0;
+
+                        if (cleared) {
+                            post(DBG, '✓ 第' + round + '轮：输入框已清空');
+                        } else if (replyStarted) {
+                            post(DBG, '✓ 第' + round + '轮：回复已出现（len=' + replyLen + '），视为发送成功');
                         } else if (round < 4) {
-                            post(DBG, '第' + round + '轮后仍有 ' + remaining + ' 字，600ms后重试');
+                            post(DBG, '第' + round + '轮后 remaining=' + remaining + ' replyLen=0，600ms后重试');
                             setTimeout(function() { trySend(el, round + 1); }, 600);
                         } else {
-                            post(DBG, '⚠️ ' + round + '轮后仍未清空，发送可能失败');
-                            post(ERR, 'send_failed');
+                            // 4轮后仍无信号：记录警告，但不发 _error 不阻塞渲染
+                            // 数据可能仍在传输，交给 90s 超时兜底
+                            post(DBG, '⚠️ 4轮后未检测到清空或回复，但不阻断。等待监听器自动捕获');
                         }
-                    }, 500);
+                    }, 800);
                 }
             })();
             """
@@ -524,19 +536,24 @@ enum JSBridge {
                     clickAt(vw - 44, vh - 88);
                     clickAt(vw - 44, vh - 130);
 
-                    // 500ms后检查
+                    // 800ms 后检查：输入清空 OR 回复已出现，均视为成功
                     setTimeout(function() {
-                        var remaining = (el.innerText || el.value || '').trim().length;
-                        if (remaining === 0) {
-                            post(DBG, 'GM ✓ 第' + round + '轮发送成功');
+                        var remaining    = (el.innerText || el.value || '').trim().length;
+                        var replyLen     = window.__gmReplyLen || 0;
+                        var cleared      = remaining === 0;
+                        var replyStarted = replyLen > 0;
+
+                        if (cleared) {
+                            post(DBG, 'GM ✓ 第' + round + '轮：输入框已清空');
+                        } else if (replyStarted) {
+                            post(DBG, 'GM ✓ 第' + round + '轮：回复已出现（len=' + replyLen + '），视为发送成功');
                         } else if (round < 4) {
-                            post(DBG, 'GM 第' + round + '轮后仍有 ' + remaining + ' 字，重试');
+                            post(DBG, 'GM 第' + round + '轮后 remaining=' + remaining + ' replyLen=0，重试');
                             setTimeout(function() { trySend(el, round + 1); }, 600);
                         } else {
-                            post(DBG, 'GM ⚠️ ' + round + '轮后仍未清空');
-                            post(ERR, 'send_failed');
+                            post(DBG, 'GM ⚠️ 4轮后未检测到清空或回复，不阻断，等待监听器');
                         }
-                    }, 500);
+                    }, 800);
                 }
             })();
             """

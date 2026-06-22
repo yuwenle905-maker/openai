@@ -4,7 +4,6 @@ import UIKit
 struct WorkbenchView: View {
     @EnvironmentObject private var orchestrator: AIOrchestrator
     @State private var inputText = ""
-    @State private var showMergeButton = false
     @FocusState private var isInputFocused: Bool
 
     // 由 orchestrator 的加载状态驱动，不用额外的本地状态
@@ -70,6 +69,7 @@ struct WorkbenchView: View {
                         .padding(DS.Space.md)
                         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.deepSeekResponse)
                         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.geminiResponse)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: orchestrator.mergedResponse)
                     }
                     // 下滑手势收起键盘（最自然的交互方式）
                     .scrollDismissesKeyboard(.interactively)
@@ -81,12 +81,6 @@ struct WorkbenchView: View {
                 }
             }
         }
-        .onChange(of: orchestrator.deepSeekResponse) { _, new in
-            showMergeButton = !new.isEmpty && !orchestrator.geminiResponse.isEmpty
-        }
-        .onChange(of: orchestrator.geminiResponse) { _, new in
-            showMergeButton = !orchestrator.deepSeekResponse.isEmpty && !new.isEmpty
-        }
     }
 
     // MARK: - Bottom Bar（InputBar + 整合按钮）
@@ -94,7 +88,7 @@ struct WorkbenchView: View {
     @ViewBuilder
     private var bottomBar: some View {
         VStack(spacing: 0) {
-            if showMergeButton {
+            if orchestrator.canMerge {
                 MergeButtonRow(isMerging: orchestrator.isMerging) {
                     orchestrator.merge()
                 }
@@ -113,7 +107,7 @@ struct WorkbenchView: View {
             // Tab Bar 高度兜底（键盘收起时保证不被 Tab Bar 遮挡）
             .padding(.bottom, isInputFocused ? 0 : 80)
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showMergeButton)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: orchestrator.canMerge)
         .animation(.easeOut(duration: 0.25), value: isInputFocused)
         // 确保底部背景延伸到 home indicator
         .background(
