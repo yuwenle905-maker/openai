@@ -77,14 +77,16 @@ enum JSBridge {
                 window.__dsListenerActive = true;
 
                 window.__startDSListener = function() {
-                    // 清理上一次的状态
                     if (window.__dsObserver)  { window.__dsObserver.disconnect(); }
                     clearTimeout(window.__dsDebounce);
                     clearTimeout(window.__dsMaxTimer);
+                    clearInterval(window.__dsPolling);
                     window.__dsSent = false;
+                    window.debugLastTextLength = 0;
+                    window.__dsPrevPollLen = -1;
+                    window.__dsNoChangeCount = 0;
 
                     function getReply() {
-                        // 广谱选择器：取页面内所有 markdown/回复容器的最后一个
                         var candidates = document.querySelectorAll(
                             '[class*="ds-markdown"], [class*="markdown"], ' +
                             '[class*="message-content"], [class*="assistant"], ' +
@@ -94,7 +96,7 @@ enum JSBridge {
                         return last ? last.innerText.trim() : '';
                     }
 
-                    function tryPost() {
+                    function tryPost(reason) {
                         if (window.__dsSent) return;
                         var text = getReply();
                         if (text.length < 5) {
@@ -104,28 +106,49 @@ enum JSBridge {
                         window.__dsSent = true;
                         if (window.__dsObserver) window.__dsObserver.disconnect();
                         clearTimeout(window.__dsMaxTimer);
-                        console.log('[DSListener] 防抖触发，回复长度=' + text.length + '，发送');
+                        clearInterval(window.__dsPolling);
+                        console.log('[DSListener] 触发原因=' + reason + '，回复长度=' + text.length + '，发送');
                         window.webkit.messageHandlers.\(handler).postMessage(text);
                     }
 
+                    // MutationObserver：每次 DOM 变化打 debug 日志 + 重置防抖
                     window.__dsObserver = new MutationObserver(function() {
-                        // 每次 DOM 变化重置 1.5 秒计时器
+                        var currentLen = getReply().length;
+                        window.debugLastTextLength = currentLen;
+                        console.log('[WVM-Debug] DOM changed, current text length: ' + currentLen);
                         clearTimeout(window.__dsDebounce);
-                        window.__dsDebounce = setTimeout(tryPost, 1500);
+                        window.__dsDebounce = setTimeout(function() { tryPost('debounce-1.5s'); }, 1500);
                     });
                     window.__dsObserver.observe(document.body, {
                         childList: true, subtree: true, characterData: true
                     });
 
-                    // 90 秒硬超时兜底，防止永久卡住
+                    // 主动轮询：每 1 秒检查一次，连续 3 秒无变化则强制结束
+                    window.__dsPolling = setInterval(function() {
+                        if (window.__dsSent) { clearInterval(window.__dsPolling); return; }
+                        var currentLen = getReply().length;
+                        console.log('[WVM-Debug] 轮询检查 DS text length=' + currentLen + ' prevLen=' + window.__dsPrevPollLen + ' noChangeCount=' + window.__dsNoChangeCount);
+                        if (currentLen >= 5 && currentLen === window.__dsPrevPollLen) {
+                            window.__dsNoChangeCount++;
+                            if (window.__dsNoChangeCount >= 3) {
+                                console.log('[DSListener] 轮询3秒无变化，强制结束');
+                                clearInterval(window.__dsPolling);
+                                tryPost('polling-3s-no-change');
+                            }
+                        } else {
+                            window.__dsNoChangeCount = 0;
+                        }
+                        window.__dsPrevPollLen = currentLen;
+                    }, 1000);
+
                     window.__dsMaxTimer = setTimeout(function() {
                         if (!window.__dsSent) {
                             console.log('[DSListener] 90s 硬超时，强制发送');
-                            tryPost();
+                            tryPost('timeout-90s');
                         }
                     }, 90000);
 
-                    console.log('[DSListener] 开始监听（防抖模式），等待回复...');
+                    console.log('[DSListener] 开始监听（防抖+主动轮询双模式），等待回复...');
                 };
             })();
             """
@@ -140,7 +163,10 @@ enum JSBridge {
                     if (window.__gmObserver)  { window.__gmObserver.disconnect(); }
                     clearTimeout(window.__gmDebounce);
                     clearTimeout(window.__gmMaxTimer);
+                    clearInterval(window.__gmPolling);
                     window.__gmSent = false;
+                    window.__gmPrevPollLen = -1;
+                    window.__gmNoChangeCount = 0;
 
                     function getReply() {
                         var candidates = document.querySelectorAll(
@@ -152,7 +178,7 @@ enum JSBridge {
                         return last ? last.innerText.trim() : '';
                     }
 
-                    function tryPost() {
+                    function tryPost(reason) {
                         if (window.__gmSent) return;
                         var text = getReply();
                         if (text.length < 5) {
@@ -162,26 +188,48 @@ enum JSBridge {
                         window.__gmSent = true;
                         if (window.__gmObserver) window.__gmObserver.disconnect();
                         clearTimeout(window.__gmMaxTimer);
-                        console.log('[GMListener] 防抖触发，回复长度=' + text.length + '，发送');
+                        clearInterval(window.__gmPolling);
+                        console.log('[GMListener] 触发原因=' + reason + '，回复长度=' + text.length + '，发送');
                         window.webkit.messageHandlers.\(handler).postMessage(text);
                     }
 
+                    // MutationObserver：每次 DOM 变化打 debug 日志 + 重置防抖
                     window.__gmObserver = new MutationObserver(function() {
+                        var currentLen = getReply().length;
+                        console.log('[WVM-Debug] DOM changed, current text length: ' + currentLen);
                         clearTimeout(window.__gmDebounce);
-                        window.__gmDebounce = setTimeout(tryPost, 1500);
+                        window.__gmDebounce = setTimeout(function() { tryPost('debounce-1.5s'); }, 1500);
                     });
                     window.__gmObserver.observe(document.body, {
                         childList: true, subtree: true, characterData: true
                     });
 
+                    // 主动轮询：每 1 秒检查一次，连续 3 秒无变化则强制结束
+                    window.__gmPolling = setInterval(function() {
+                        if (window.__gmSent) { clearInterval(window.__gmPolling); return; }
+                        var currentLen = getReply().length;
+                        console.log('[WVM-Debug] 轮询检查 GM text length=' + currentLen + ' prevLen=' + window.__gmPrevPollLen + ' noChangeCount=' + window.__gmNoChangeCount);
+                        if (currentLen >= 5 && currentLen === window.__gmPrevPollLen) {
+                            window.__gmNoChangeCount++;
+                            if (window.__gmNoChangeCount >= 3) {
+                                console.log('[GMListener] 轮询3秒无变化，强制结束');
+                                clearInterval(window.__gmPolling);
+                                tryPost('polling-3s-no-change');
+                            }
+                        } else {
+                            window.__gmNoChangeCount = 0;
+                        }
+                        window.__gmPrevPollLen = currentLen;
+                    }, 1000);
+
                     window.__gmMaxTimer = setTimeout(function() {
                         if (!window.__gmSent) {
                             console.log('[GMListener] 90s 硬超时，强制发送');
-                            tryPost();
+                            tryPost('timeout-90s');
                         }
                     }, 90000);
 
-                    console.log('[GMListener] 开始监听（防抖模式），等待回复...');
+                    console.log('[GMListener] 开始监听（防抖+主动轮询双模式），等待回复...');
                 };
             })();
             """
@@ -265,6 +313,17 @@ enum JSBridge {
                         btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
                         btn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
                         btn.click();
+                        // 500ms 后检查输入框是否已清空（清空=发送成功）
+                        setTimeout(function() {
+                            var checkInput = document.querySelector('textarea#chat-input')
+                                          || document.querySelector('textarea[placeholder]')
+                                          || document.querySelector('textarea');
+                            if (checkInput && checkInput.value.trim().length > 0) {
+                                console.warn('[DSInject] 发送请求后，输入框内容仍为 ' + checkInput.value.trim().length + '，发送可能未触达');
+                            } else {
+                                console.log('[DSInject] 输入框已清空，发送成功');
+                            }
+                        }, 500);
                     } else if (attempts < 10) {
                         console.log('[DSInject] 第' + attempts + '次，按钮未就绪，200ms后重试');
                         setTimeout(tryClickSend, 200);
@@ -377,6 +436,18 @@ enum JSBridge {
                         btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
                         btn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
                         btn.click();
+                        // 500ms 后检查输入框是否已清空（清空=发送成功）
+                        setTimeout(function() {
+                            var checkEditor = document.querySelector('rich-textarea .ql-editor')
+                                           || document.querySelector('rich-textarea [contenteditable="true"]')
+                                           || document.querySelector('[contenteditable="true"]');
+                            var remaining = checkEditor ? checkEditor.innerText.trim().length : 0;
+                            if (remaining > 0) {
+                                console.warn('[GMInject] 发送请求后，输入框内容仍为 ' + remaining + '，发送可能未触达');
+                            } else {
+                                console.log('[GMInject] 输入框已清空，发送成功');
+                            }
+                        }, 500);
                     } else if (attempts < 10) {
                         console.log('[GMInject] 第' + attempts + '次，按钮未就绪，200ms后重试');
                         setTimeout(tryClickSend, 200);
