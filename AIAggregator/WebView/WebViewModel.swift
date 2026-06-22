@@ -95,12 +95,8 @@ final class WebViewModel: NSObject, ObservableObject {
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = self
         wv.uiDelegate = self
-        // 使用桌面 UA，防止网站限制功能
-        wv.customUserAgent = """
-        Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
-        AppleWebKit/605.1.15 (KHTML, like Gecko) \
-        Version/17.0 Safari/605.1.15
-        """
+        // 单行桌面 Safari UA，避免多行拼接引入空格或换行导致网站降级
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         return wv
     }
 
