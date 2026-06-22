@@ -12,9 +12,13 @@ final class AIOrchestrator: ObservableObject {
     @Published var isGeminiLoading   = false
     @Published var isMerging         = false
 
+    /// UI 可见诊断日志（最多保留 20 条，显示在 WorkbenchView debugLabel）
+    @Published var debugLog: String = ""
+
     private let webVM = WebViewModel()
     private var cancellables = Set<AnyCancellable>()
     private var mergeTimeoutWork: DispatchWorkItem?
+    private var sendTimeoutWork: DispatchWorkItem?
 
     var deepSeekWebView: WKWebView { webVM.deepSeekWebView }
     var geminiWebView:   WKWebView { webVM.geminiWebView }
@@ -29,6 +33,23 @@ final class AIOrchestrator: ObservableObject {
         mergedResponse    = ""
         isDeepSeekLoading = true
         isGeminiLoading   = true
+
+        appendDebug("📤 发送: \(query.prefix(30))...")
+
+        // 15s 超时：如果没有任何回复到达，在 debugLog 显示错误
+        sendTimeoutWork?.cancel()
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            var stuck: [String] = []
+            if self.isDeepSeekLoading { stuck.append("DeepSeek") }
+            if self.isGeminiLoading   { stuck.append("Gemini") }
+            if !stuck.isEmpty {
+                self.appendDebug("⚠️ 15s超时无回复: \(stuck.joined(separator: "/"))。检查JS注入是否成功、按钮是否可点")
+            }
+        }
+        sendTimeoutWork = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: timeout)
+
         webVM.sendToDeepSeek(query: query)
         webVM.sendToGemini(query: query)
     }
@@ -43,22 +64,29 @@ final class AIOrchestrator: ObservableObject {
             geminiAnswer: geminiResponse
         )
 
-        // evaluateJavaScript 的 completion 是 JS「注入完成」回调，
-        // 不是 Gemini「回答完成」回调，绝对不能在这里 isMerging = false。
-        // isMerging 的重置由 Combine 绑定在 geminiReply 到达时处理。
         webVM.geminiWebView.evaluateJavaScript(script) { _, error in
             if let error { print("[Orchestrator] merge 注入错误: \(error)") }
         }
 
-        // 120 秒硬超时：防止整合永久卡住
         mergeTimeoutWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isMerging else { return }
             print("[Orchestrator] merge 120s 超时，强制重置")
+            self.appendDebug("⚠️ 整合120s超时，强制重置")
             self.isMerging = false
         }
         mergeTimeoutWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: work)
+    }
+
+    func appendDebug(_ msg: String) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss"
+        let entry = "[\(fmt.string(from: Date()))] \(msg)"
+        print("[DiagLog] \(entry)")
+        debugLog = debugLog.isEmpty ? entry : debugLog + "\n" + entry
+        let lines = debugLog.components(separatedBy: "\n")
+        if lines.count > 20 { debugLog = lines.suffix(20).joined(separator: "\n") }
     }
 
     // MARK: - Private
@@ -71,8 +99,10 @@ final class AIOrchestrator: ObservableObject {
             .sink { [weak self] reply in
                 guard let self else { return }
                 print("[Orchestrator] ✅ DeepSeek 回复到达，长度=\(reply.count)")
+                self.sendTimeoutWork?.cancel()
                 self.deepSeekResponse  = reply
                 self.isDeepSeekLoading = false
+                self.appendDebug("✅ DS回复到达，长度=\(reply.count)")
             }
             .store(in: &cancellables)
 
@@ -87,11 +117,26 @@ final class AIOrchestrator: ObservableObject {
                     self.mergedResponse = reply
                     self.isMerging      = false
                     self.mergeTimeoutWork?.cancel()
+                    self.appendDebug("✅ 整合回复到达，长度=\(reply.count)")
                 } else {
                     print("[Orchestrator] ✅ Gemini 回复到达，长度=\(reply.count)")
+                    self.sendTimeoutWork?.cancel()
                     self.geminiResponse  = reply
                     self.isGeminiLoading = false
+                    self.appendDebug("✅ GM回复到达，长度=\(reply.count)")
                 }
+            }
+            .store(in: &cancellables)
+
+        // JS 层诊断事件 → 聚合到 debugLog
+        webVM.$debugEntry
+            .filter { !$0.isEmpty }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] entry in
+                guard let self else { return }
+                self.debugLog = self.debugLog.isEmpty ? entry : self.debugLog + "\n" + entry
+                let lines = self.debugLog.components(separatedBy: "\n")
+                if lines.count > 20 { self.debugLog = lines.suffix(20).joined(separator: "\n") }
             }
             .store(in: &cancellables)
     }

@@ -57,6 +57,13 @@ struct WorkbenchView: View {
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
 
+                            if !orchestrator.debugLog.isEmpty {
+                                DiagnosticLogView(log: orchestrator.debugLog) {
+                                    orchestrator.debugLog = ""
+                                }
+                                .transition(.opacity)
+                            }
+
                             // 底部留白，避免内容贴着输入栏
                             Color.clear.frame(height: DS.Space.lg)
                         }
@@ -552,5 +559,53 @@ private struct StatBadge: View {
                 .font(DS.Font.labelSmall)
                 .foregroundColor(DS.Color.textSecondary)
         }
+    }
+}
+
+// MARK: - Diagnostic Log View（手机可见的诊断标签）
+
+private struct DiagnosticLogView: View {
+    let log: String
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+                Text("诊断日志")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.orange)
+                Spacer()
+                Button(action: onClear) {
+                    Text("清除")
+                        .font(.system(size: 10))
+                        .foregroundColor(.gray)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+            }
+
+            ScrollView {
+                Text(log)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.orange.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 150)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.black.opacity(0.85))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.orange.opacity(0.5), lineWidth: 0.8)
+                )
+        )
     }
 }

@@ -13,6 +13,9 @@ final class WebViewModel: NSObject, ObservableObject {
     @Published var isDeepSeekBusy = false
     @Published var isGeminiBusy   = false
 
+    /// JS 层最新上报的单条调试事件（AIOrchestrator 订阅后聚合到 debugLog）
+    @Published var debugEntry: String = ""
+
     /// 页面 DOM 就绪状态（输入框 + 发送按钮均已存在）
     @Published var deepSeekIsReady = false
     @Published var geminiIsReady   = false
@@ -77,6 +80,8 @@ final class WebViewModel: NSObject, ObservableObject {
         controller.add(LeakAvoider(delegate: self), name: "\(platform.messageHandler)_error")
         // 就绪检测通道
         controller.add(LeakAvoider(delegate: self), name: "\(platform.messageHandler)_ready")
+        // UI 可见诊断通道（JS 主动上报，显示在 debugLabel）
+        controller.add(LeakAvoider(delegate: self), name: "\(platform.messageHandler)_debug")
 
         // ── 预注入全局监听脚本（每次页面导航后自动重注入）────────────
         let listenerScript = WKUserScript(
@@ -97,6 +102,14 @@ final class WebViewModel: NSObject, ObservableObject {
         Version/17.0 Safari/605.1.15
         """
         return wv
+    }
+
+    // MARK: - 诊断日志辅助
+
+    func postDebug(_ message: String) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss"
+        debugEntry = "[\(fmt.string(from: Date()))] \(message)"
     }
 
     // pageReadyCheck 同样用 completion handler
@@ -149,10 +162,21 @@ extension WebViewModel: WKScriptMessageHandler {
             case "\(AIPlatform.deepSeek.messageHandler)_error":
                 print("[WVM] ❌ DeepSeek JS 错误: \(body)")
                 self.isDeepSeekBusy = false
+                self.postDebug("[DS❌] \(body)")
 
             case "\(AIPlatform.gemini.messageHandler)_error":
                 print("[WVM] ❌ Gemini JS 错误: \(body)")
                 self.isGeminiBusy = false
+                self.postDebug("[GM❌] \(body)")
+
+            // ── UI 诊断日志 ───────────────────────────────────────
+            case "\(AIPlatform.deepSeek.messageHandler)_debug":
+                print("[WVM] 🔍 DS诊断: \(body)")
+                self.postDebug("[DS] \(body)")
+
+            case "\(AIPlatform.gemini.messageHandler)_debug":
+                print("[WVM] 🔍 GM诊断: \(body)")
+                self.postDebug("[GM] \(body)")
 
             default:
                 print("[WVM] ⚠️ 未知通道: \(message.name)")

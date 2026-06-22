@@ -124,10 +124,19 @@ enum JSBridge {
                     });
 
                     // 主动轮询：每 1 秒检查一次，连续 3 秒无变化则强制结束
+                    window.__dsPollCount = 0;
                     window.__dsPolling = setInterval(function() {
                         if (window.__dsSent) { clearInterval(window.__dsPolling); return; }
+                        window.__dsPollCount++;
                         var currentLen = getReply().length;
                         console.log('[WVM-Debug] 轮询检查 DS text length=' + currentLen + ' prevLen=' + window.__dsPrevPollLen + ' noChangeCount=' + window.__dsNoChangeCount);
+                        // 5s 后内容仍空 → 选择器可能未命中，上报诊断
+                        if (currentLen === 0 && window.__dsPollCount === 5) {
+                            var cands = document.querySelectorAll('[class*="ds-markdown"],[class*="markdown"],[class*="message-content"],[class*="assistant"],[class*="response"],[class*="reply"]').length;
+                            var selectorMsg = 'DS选择器5s未命中，候选容器=' + cands + '。AI可能未响应或选择器需更新';
+                            console.warn('[DSListener] ' + selectorMsg);
+                            try { window.webkit.messageHandlers.\(handler)_debug.postMessage(selectorMsg); } catch(e) {}
+                        }
                         if (currentLen >= 5 && currentLen === window.__dsPrevPollLen) {
                             window.__dsNoChangeCount++;
                             if (window.__dsNoChangeCount >= 3) {
@@ -205,10 +214,19 @@ enum JSBridge {
                     });
 
                     // 主动轮询：每 1 秒检查一次，连续 3 秒无变化则强制结束
+                    window.__gmPollCount = 0;
                     window.__gmPolling = setInterval(function() {
                         if (window.__gmSent) { clearInterval(window.__gmPolling); return; }
+                        window.__gmPollCount++;
                         var currentLen = getReply().length;
                         console.log('[WVM-Debug] 轮询检查 GM text length=' + currentLen + ' prevLen=' + window.__gmPrevPollLen + ' noChangeCount=' + window.__gmNoChangeCount);
+                        // 5s 后内容仍空 → 选择器可能未命中，上报诊断
+                        if (currentLen === 0 && window.__gmPollCount === 5) {
+                            var cands = document.querySelectorAll('model-response,message-content,[class*="response-content"],[class*="model-response"],[class*="assistant"],.response-container').length;
+                            var selectorMsg = 'GM选择器5s未命中，候选容器=' + cands + '。AI可能未响应或选择器需更新';
+                            console.warn('[GMListener] ' + selectorMsg);
+                            try { window.webkit.messageHandlers.\(handler)_debug.postMessage(selectorMsg); } catch(e) {}
+                        }
                         if (currentLen >= 5 && currentLen === window.__gmPrevPollLen) {
                             window.__gmNoChangeCount++;
                             if (window.__gmNoChangeCount >= 3) {
@@ -313,17 +331,42 @@ enum JSBridge {
                         btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
                         btn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
                         btn.click();
-                        // 500ms 后检查输入框是否已清空（清空=发送成功）
+                        // 500ms：检查输入框是否已清空并上报
                         setTimeout(function() {
-                            var checkInput = document.querySelector('textarea#chat-input')
-                                          || document.querySelector('textarea[placeholder]')
-                                          || document.querySelector('textarea');
-                            if (checkInput && checkInput.value.trim().length > 0) {
-                                console.warn('[DSInject] 发送请求后，输入框内容仍为 ' + checkInput.value.trim().length + '，发送可能未触达');
+                            var ci = document.querySelector('textarea#chat-input')
+                                  || document.querySelector('textarea[placeholder]')
+                                  || document.querySelector('textarea');
+                            var remaining = ci ? ci.value.trim().length : 0;
+                            if (remaining > 0) {
+                                var msg = '发送请求后，输入框内容仍为 ' + remaining + '，发送可能未触达';
+                                console.warn('[DSInject] ' + msg);
+                                try { window.webkit.messageHandlers.deepSeekReply_debug.postMessage(msg); } catch(e) {}
                             } else {
                                 console.log('[DSInject] 输入框已清空，发送成功');
+                                try { window.webkit.messageHandlers.deepSeekReply_debug.postMessage('✓ 发送成功，输入框已清空'); } catch(e) {}
                             }
                         }, 500);
+                        // 3s：若输入框仍有内容，强制二次点击
+                        setTimeout(function() {
+                            var ci = document.querySelector('textarea#chat-input')
+                                  || document.querySelector('textarea[placeholder]')
+                                  || document.querySelector('textarea');
+                            if (!ci || ci.value.trim().length === 0) { return; }
+                            console.warn('[DSInject] 3s后输入框仍有内容，执行强制重试');
+                            try { window.webkit.messageHandlers.deepSeekReply_debug.postMessage('⚠️ 3s强制重试：输入框未清空，再次点击发送'); } catch(e) {}
+                            var rb = document.querySelector('button[type="submit"]:not([disabled])')
+                                  || document.querySelector('[data-testid="send-button"]:not([disabled])')
+                                  || document.querySelector('#send-button:not([disabled])');
+                            if (rb) {
+                                rb.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                                rb.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+                                rb.click();
+                                try { window.webkit.messageHandlers.deepSeekReply_debug.postMessage('⚠️ 3s强制重试点击已执行'); } catch(e) {}
+                            } else {
+                                ci.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13 }));
+                                try { window.webkit.messageHandlers.deepSeekReply_debug.postMessage('⚠️ 3s强制重试：按钮不可用，Enter键兜底'); } catch(e) {}
+                            }
+                        }, 3000);
                     } else if (attempts < 10) {
                         console.log('[DSInject] 第' + attempts + '次，按钮未就绪，200ms后重试');
                         setTimeout(tryClickSend, 200);
@@ -436,18 +479,42 @@ enum JSBridge {
                         btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
                         btn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
                         btn.click();
-                        // 500ms 后检查输入框是否已清空（清空=发送成功）
+                        // 500ms：检查输入框是否已清空并上报
                         setTimeout(function() {
-                            var checkEditor = document.querySelector('rich-textarea .ql-editor')
-                                           || document.querySelector('rich-textarea [contenteditable="true"]')
-                                           || document.querySelector('[contenteditable="true"]');
-                            var remaining = checkEditor ? checkEditor.innerText.trim().length : 0;
+                            var ce = document.querySelector('rich-textarea .ql-editor')
+                                  || document.querySelector('rich-textarea [contenteditable="true"]')
+                                  || document.querySelector('[contenteditable="true"]');
+                            var remaining = ce ? ce.innerText.trim().length : 0;
                             if (remaining > 0) {
-                                console.warn('[GMInject] 发送请求后，输入框内容仍为 ' + remaining + '，发送可能未触达');
+                                var msg = '发送请求后，输入框内容仍为 ' + remaining + '，发送可能未触达';
+                                console.warn('[GMInject] ' + msg);
+                                try { window.webkit.messageHandlers.geminiReply_debug.postMessage(msg); } catch(e) {}
                             } else {
                                 console.log('[GMInject] 输入框已清空，发送成功');
+                                try { window.webkit.messageHandlers.geminiReply_debug.postMessage('✓ 发送成功，输入框已清空'); } catch(e) {}
                             }
                         }, 500);
+                        // 3s：若输入框仍有内容，强制二次点击
+                        setTimeout(function() {
+                            var ce = document.querySelector('rich-textarea .ql-editor')
+                                  || document.querySelector('rich-textarea [contenteditable="true"]')
+                                  || document.querySelector('[contenteditable="true"]');
+                            if (!ce || ce.innerText.trim().length === 0) { return; }
+                            console.warn('[GMInject] 3s后输入框仍有内容，执行强制重试');
+                            try { window.webkit.messageHandlers.geminiReply_debug.postMessage('⚠️ 3s强制重试：输入框未清空，再次点击发送'); } catch(e) {}
+                            var rb = document.querySelector('button[aria-label*="Send"]:not([disabled])')
+                                  || document.querySelector('button[data-mat-icon-name="send"]:not([disabled])')
+                                  || document.querySelector('button[jsname="Qx7uuf"]:not([disabled])');
+                            if (rb) {
+                                rb.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                                rb.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+                                rb.click();
+                                try { window.webkit.messageHandlers.geminiReply_debug.postMessage('⚠️ 3s强制重试点击已执行'); } catch(e) {}
+                            } else {
+                                ce.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13 }));
+                                try { window.webkit.messageHandlers.geminiReply_debug.postMessage('⚠️ 3s强制重试：按钮不可用，Enter键兜底'); } catch(e) {}
+                            }
+                        }, 3000);
                     } else if (attempts < 10) {
                         console.log('[GMInject] 第' + attempts + '次，按钮未就绪，200ms后重试');
                         setTimeout(tryClickSend, 200);
