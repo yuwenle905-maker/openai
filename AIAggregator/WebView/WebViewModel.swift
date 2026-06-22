@@ -191,11 +191,19 @@ extension WebViewModel: WKScriptMessageHandler {
 extension WebViewModel: WKNavigationDelegate {
 
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // 延迟 2 秒等 React SPA 渲染完成，然后用 completion handler 版做就绪检测
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self else { return }
             let platform: AIPlatform = (webView === self.deepSeekWebView) ? .deepSeek : .gemini
             self.checkPageReady(platform: platform)
+        }
+        // DOM 结构探测：页面加载 4 秒后执行，结果显示在 debugLabel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self else { return }
+            let platform: AIPlatform = (webView === self.deepSeekWebView) ? .deepSeek : .gemini
+            let probeScript = JSBridge.domProbeScript(platform: platform)
+            webView.evaluateJavaScript(probeScript) { _, error in
+                if let error { print("[WVM] domProbe error: \(error)") }
+            }
         }
     }
 
