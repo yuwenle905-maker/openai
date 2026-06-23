@@ -14,6 +14,10 @@ final class AIOrchestrator: ObservableObject {
 
     @Published var debugLog: String = ""
 
+    // 转发 WebViewModel 的就绪状态，供 ControlPanelView 显示
+    @Published var deepSeekIsReady: Bool = false
+    @Published var geminiIsReady: Bool   = false
+
     var canMerge: Bool { !deepSeekResponse.isEmpty && !geminiResponse.isEmpty }
 
     private let webVM = WebViewModel()
@@ -21,9 +25,9 @@ final class AIOrchestrator: ObservableObject {
     private var mergeTimeoutWork: DispatchWorkItem?
     private var sendTimeoutWork: DispatchWorkItem?
 
-    // 3s 监听窗口 + 2s 稳定判定
-    private var dsWindowWork: DispatchWorkItem?   // 1s 初始缓冲
-    private var dsStabilizeWork: DispatchWorkItem? // 2s 稳定检测
+    // 3s 监听窗口（1s 初始缓冲 + 2s 稳定检测）
+    private var dsWindowWork: DispatchWorkItem?
+    private var dsStabilizeWork: DispatchWorkItem?
     private var gmWindowWork: DispatchWorkItem?
     private var gmStabilizeWork: DispatchWorkItem?
     private var lastDSLength = 0
@@ -45,6 +49,9 @@ final class AIOrchestrator: ObservableObject {
         lastDSLength      = 0
         lastGMLength      = 0
         cancelAllStabilize()
+
+        // 强制要求详细、深度回答
+        let enriched = "请提供详细、深度的分析，尽可能全面地回答以下问题，内容不少于300字。\n\n\(query)"
         appendDebug("📤 发送: \(query.prefix(30))...")
 
         sendTimeoutWork?.cancel()
@@ -53,15 +60,13 @@ final class AIOrchestrator: ObservableObject {
             var stuck: [String] = []
             if self.isDeepSeekLoading { stuck.append("DeepSeek") }
             if self.isGeminiLoading   { stuck.append("Gemini") }
-            if !stuck.isEmpty {
-                self.appendDebug("⚠️ 15s超时无回复: \(stuck.joined(separator: "/"))")
-            }
+            if !stuck.isEmpty { self.appendDebug("⚠️ 15s超时无回复: \(stuck.joined(separator: "/"))") }
         }
         sendTimeoutWork = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: timeout)
 
-        webVM.sendToDeepSeek(query: query)
-        webVM.sendToGemini(query: query)
+        webVM.sendToDeepSeek(query: enriched)
+        webVM.sendToGemini(query: enriched)
     }
 
     func merge() {
@@ -72,9 +77,7 @@ final class AIOrchestrator: ObservableObject {
         appendDebug("🔀 触发整合，注入 Gemini...")
         let script = JSBridge.buildMergeScript(deepSeekAnswer: deepSeekResponse, geminiAnswer: geminiResponse)
         webVM.geminiWebView.evaluateJavaScript(script) { [weak self] _, error in
-            if let error {
-                self?.appendDebug("⚠️ merge 注入错误: \(error.localizedDescription)")
-            }
+            if let error { self?.appendDebug("⚠️ merge 注入错误: \(error.localizedDescription)") }
         }
         mergeTimeoutWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -87,31 +90,30 @@ final class AIOrchestrator: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: work)
     }
 
-    // MARK: - 强制渲染（带 3s 缓冲窗口）
+    // MARK: - 强制渲染（3s监听窗口）
 
     func renderDeepSeekReply(_ reply: String) {
         guard !reply.isEmpty else { return }
         sendTimeoutWork?.cancel()
         deepSeekResponse = reply
         objectWillChange.send()
-        appendDebug("📥 DS回复到达，长度=\(reply.count)，开启3s监听窗口...")
+        appendDebug("📥 DS到达，长度=\(reply.count)，开启3s窗口...")
         scheduleWindow(for: .deepSeek, currentLength: reply.count)
     }
 
     func renderGeminiReply(_ reply: String) {
         guard !reply.isEmpty else { return }
         if isMerging {
-            // 整合结果：直接写入，强制刷新 UI
             mergedResponse = reply
             isMerging      = false
             mergeTimeoutWork?.cancel()
             objectWillChange.send()
-            appendDebug("✅ 整合回复写入，长度=\(reply.count)")
+            appendDebug("✅ 整合结论写入，长度=\(reply.count)")
         } else {
             sendTimeoutWork?.cancel()
             geminiResponse = reply
             objectWillChange.send()
-            appendDebug("📥 GM回复到达，长度=\(reply.count)，开启3s监听窗口...")
+            appendDebug("📥 GM到达，长度=\(reply.count)，开启3s窗口...")
             scheduleWindow(for: .gemini, currentLength: reply.count)
         }
     }
@@ -123,33 +125,28 @@ final class AIOrchestrator: ObservableObject {
         print("[DiagLog] \(entry)")
         debugLog = debugLog.isEmpty ? entry : debugLog + "\n" + entry
         let lines = debugLog.components(separatedBy: "\n")
-        if lines.count > 20 { debugLog = lines.suffix(20).joined(separator: "\n") }
+        if lines.count > 30 { debugLog = lines.suffix(30).joined(separator: "\n") }
     }
 
-    // MARK: - 3s 监听窗口（1s初始缓冲 + 2s稳定检测）
+    // MARK: - 3s 监听窗口（1s初始缓冲 + 2s稳定）
 
     private enum ReplySource { case deepSeek, gemini }
 
-    // 第一阶段：1s 初始缓冲（等内容开始流入后再进入稳定检测）
     private func scheduleWindow(for source: ReplySource, currentLength: Int) {
         switch source {
         case .deepSeek:
-            dsWindowWork?.cancel()
-            dsStabilizeWork?.cancel()
+            dsWindowWork?.cancel(); dsStabilizeWork?.cancel()
             lastDSLength = currentLength
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                // 1s 后更新快照，进入第二阶段稳定检测
                 self.lastDSLength = self.deepSeekResponse.count
                 self.appendDebug("⏱ DS 1s缓冲完毕，长度=\(self.lastDSLength)，等待2s稳定...")
                 self.scheduleStabilize(for: .deepSeek)
             }
             dsWindowWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
-
         case .gemini:
-            gmWindowWork?.cancel()
-            gmStabilizeWork?.cancel()
+            gmWindowWork?.cancel(); gmStabilizeWork?.cancel()
             lastGMLength = currentLength
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
@@ -162,7 +159,6 @@ final class AIOrchestrator: ObservableObject {
         }
     }
 
-    // 第二阶段：2s 稳定检测（内容 2s 不再增长则完成）
     private func scheduleStabilize(for source: ReplySource) {
         switch source {
         case .deepSeek:
@@ -185,12 +181,11 @@ final class AIOrchestrator: ObservableObject {
             if current == lastDSLength {
                 isDeepSeekLoading = false
                 objectWillChange.send()
-                appendDebug("✅ DS回复稳定（3s窗口完成），长度=\(current)")
+                appendDebug("✅ DS稳定，长度=\(current)")
                 tryAutoMerge()
             } else {
-                // 内容仍在变化，重启稳定检测
                 lastDSLength = current
-                appendDebug("🔄 DS内容更新中，长度=\(current)，重置稳定计时...")
+                appendDebug("🔄 DS仍在更新，长度=\(current)，重置稳定计时...")
                 scheduleStabilize(for: .deepSeek)
             }
         case .gemini:
@@ -198,48 +193,41 @@ final class AIOrchestrator: ObservableObject {
             if current == lastGMLength {
                 isGeminiLoading = false
                 objectWillChange.send()
-                appendDebug("✅ GM回复稳定（3s窗口完成），长度=\(current)")
+                appendDebug("✅ GM稳定，长度=\(current)")
                 tryAutoMerge()
             } else {
                 lastGMLength = current
-                appendDebug("🔄 GM内容更新中，长度=\(current)，重置稳定计时...")
+                appendDebug("🔄 GM仍在更新，长度=\(current)，重置稳定计时...")
                 scheduleStabilize(for: .gemini)
             }
         }
     }
 
-    // 双端均稳定后自动整合
     private func tryAutoMerge() {
         guard !isDeepSeekLoading, !isGeminiLoading,
               canMerge, !isMerging, mergedResponse.isEmpty else { return }
-        appendDebug("🔀 双端3s窗口内容已稳定，自动触发整合")
+        appendDebug("🔀 双端稳定，自动整合")
         merge()
     }
 
     private func cancelAllStabilize() {
-        dsWindowWork?.cancel()
-        dsStabilizeWork?.cancel()
-        gmWindowWork?.cancel()
-        gmStabilizeWork?.cancel()
+        dsWindowWork?.cancel(); dsStabilizeWork?.cancel()
+        gmWindowWork?.cancel(); gmStabilizeWork?.cancel()
     }
 
-    // MARK: - Private Binding
+    // MARK: - Bindings
 
     private func bindWebVM() {
         webVM.$deepSeekReply
             .filter { !$0.isEmpty }
             .receive(on: RunLoop.main)
-            .sink { [weak self] reply in
-                self?.renderDeepSeekReply(reply)
-            }
+            .sink { [weak self] in self?.renderDeepSeekReply($0) }
             .store(in: &cancellables)
 
         webVM.$geminiReply
             .filter { !$0.isEmpty }
             .receive(on: RunLoop.main)
-            .sink { [weak self] reply in
-                self?.renderGeminiReply(reply)
-            }
+            .sink { [weak self] in self?.renderGeminiReply($0) }
             .store(in: &cancellables)
 
         webVM.$debugEntry
@@ -249,8 +237,19 @@ final class AIOrchestrator: ObservableObject {
                 guard let self else { return }
                 debugLog = debugLog.isEmpty ? entry : debugLog + "\n" + entry
                 let lines = debugLog.components(separatedBy: "\n")
-                if lines.count > 20 { debugLog = lines.suffix(20).joined(separator: "\n") }
+                if lines.count > 30 { debugLog = lines.suffix(30).joined(separator: "\n") }
             }
+            .store(in: &cancellables)
+
+        // 转发 ready 状态供 UI 显示
+        webVM.$deepSeekIsReady
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.deepSeekIsReady = $0 }
+            .store(in: &cancellables)
+
+        webVM.$geminiIsReady
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.geminiIsReady = $0 }
             .store(in: &cancellables)
     }
 }

@@ -10,12 +10,11 @@ struct MainTabView: View {
             TabView(selection: $selectedTab) {
                 WorkbenchView()
                     .tag(0)
-                AccountView()
+                AccountView()   // ControlPanelView（双端控制面板）
                     .tag(1)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
 
-            // 自定义 Tab Bar
             CustomTabBar(selectedTab: $selectedTab)
         }
         .ignoresSafeArea(edges: .bottom)
@@ -28,8 +27,8 @@ private struct CustomTabBar: View {
     @Binding var selectedTab: Int
 
     private let items: [(icon: String, label: String)] = [
-        ("cpu.fill", "工作台"),
-        ("person.2.fill", "账户管理")
+        ("cpu.fill",            "工作台"),
+        ("slider.horizontal.3", "控制面板")
     ]
 
     var body: some View {
@@ -52,9 +51,7 @@ private struct CustomTabBar: View {
 
                         Text(items[index].label)
                             .font(DS.Font.labelSmall)
-                            .foregroundColor(
-                                selectedTab == index ? DS.Color.cyan : DS.Color.textMuted
-                            )
+                            .foregroundColor(selectedTab == index ? DS.Color.cyan : DS.Color.textMuted)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -66,11 +63,8 @@ private struct CustomTabBar: View {
         .padding(.bottom, 8)
         .background(
             ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .environment(\.colorScheme, .dark)
-                Rectangle()
-                    .fill(DS.Color.bgCard.opacity(0.9))
+                Rectangle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+                Rectangle().fill(DS.Color.bgCard.opacity(0.9))
                 Rectangle()
                     .fill(DS.Color.borderHighlight)
                     .frame(height: 0.5)

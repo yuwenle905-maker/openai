@@ -1,128 +1,382 @@
 import SwiftUI
 import WebKit
 
-struct AccountView: View {
-    @State private var selectedPlatform: ViewPlatform = .deepSeek
+// ControlPanelView — 双端控制面板（替代原账户管理页）
+// 显示 DeepSeek / Gemini 实时状态，含登录入口与可折叠系统日志
 
+struct AccountView: View {
+    @EnvironmentObject private var orchestrator: AIOrchestrator
+
+    @State private var showDSLogin   = false
+    @State private var showGMLogin   = false
+    @State private var showSystemLog = false
+
+    // 登录 WebView 的 holder（共享默认 DataStore，与自动化 WebView 同 Cookie）
     @StateObject private var dsHolder = PlatformWebHolder(urlString: "https://chat.deepseek.com")
     @StateObject private var gmHolder = PlatformWebHolder(urlString: "https://gemini.google.com")
-
-    enum ViewPlatform: String, CaseIterable {
-        case deepSeek = "DeepSeek"
-        case gemini   = "Gemini"
-
-        var color: Color {
-            switch self {
-            case .deepSeek: return DS.Color.deepSeek
-            case .gemini:   return DS.Color.gemini
-            }
-        }
-        var gradient: LinearGradient {
-            switch self {
-            case .deepSeek: return DS.Gradient.deepSeekAccent
-            case .gemini:   return DS.Gradient.geminiAccent
-            }
-        }
-        var icon: String {
-            switch self {
-            case .deepSeek: return "sparkles"
-            case .gemini:   return "cpu"
-            }
-        }
-        var other: ViewPlatform {
-            self == .deepSeek ? .gemini : .deepSeek
-        }
-    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 DS.Gradient.appBackground.ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    AccountNavBar()
+                ScrollView {
+                    VStack(spacing: DS.Space.md) {
 
-                    PlatformSegmentPicker(selected: $selectedPlatform)
-                        .padding(DS.Space.md)
+                        // ── 页头 ────────────────────────────────────────────
+                        ControlPanelHeader()
 
-                    // 主体区：选中的 WebView 全屏展开，未选中的保持最小帧（维持 Session）
-                    ZStack(alignment: .bottomTrailing) {
-                        // 选中平台 WebView
-                        Group {
-                            if selectedPlatform == .deepSeek {
-                                PlatformWebViewPanel(holder: dsHolder)
-                            } else {
-                                PlatformWebViewPanel(holder: gmHolder)
+                        // ── 双端状态卡片 ─────────────────────────────────────
+                        HStack(spacing: DS.Space.sm) {
+                            PlatformStatusCard(
+                                name: "DeepSeek",
+                                icon: "sparkles",
+                                color: DS.Color.deepSeek,
+                                gradient: DS.Gradient.deepSeekAccent,
+                                isReady: orchestrator.deepSeekIsReady,
+                                isLoading: orchestrator.isDeepSeekLoading
+                            ) {
+                                showDSLogin = true
+                            }
+
+                            PlatformStatusCard(
+                                name: "Gemini",
+                                icon: "cpu",
+                                color: DS.Color.gemini,
+                                gradient: DS.Gradient.geminiAccent,
+                                isReady: orchestrator.geminiIsReady,
+                                isLoading: orchestrator.isGeminiLoading
+                            ) {
+                                showGMLogin = true
                             }
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.md))
-                        .overlay(alignment: .top) {
-                            RoundedRectangle(cornerRadius: DS.Radius.md)
-                                .fill(selectedPlatform.gradient)
-                                .frame(height: 2)
-                        }
-                        .shadow(color: selectedPlatform.color.opacity(0.2), radius: 16, x: 0, y: 6)
+                        .padding(.horizontal, DS.Space.md)
 
-                        // 未选中平台：50x50 状态图标（点击切换）
-                        PlatformMiniBadge(platform: selectedPlatform.other) {
-                            selectedPlatform = selectedPlatform.other
+                        // ── 使用提示（未就绪时） ─────────────────────────────
+                        if !orchestrator.deepSeekIsReady || !orchestrator.geminiIsReady {
+                            LoginHintBanner(
+                                dsReady: orchestrator.deepSeekIsReady,
+                                gmReady: orchestrator.geminiIsReady
+                            )
+                            .padding(.horizontal, DS.Space.md)
                         }
-                        .padding(.trailing, DS.Space.sm)
-                        .padding(.bottom, DS.Space.sm)
-                    }
-                    .padding(.horizontal, DS.Space.md)
-                    .padding(.bottom, 80 + DS.Space.md)
 
-                    // 两个 WebView 均保持在视图层级中（维持登录态），但尺寸设为 0
-                    ZStack {
-                        PlatformWebViewPanel(holder: dsHolder)
-                            .frame(width: selectedPlatform == .deepSeek ? 0 : 0,
-                                   height: 0)
-                            .opacity(0)
-                        PlatformWebViewPanel(holder: gmHolder)
-                            .frame(width: selectedPlatform == .gemini ? 0 : 0,
-                                   height: 0)
-                            .opacity(0)
+                        // ── 系统日志折叠区 ──────────────────────────────────
+                        SystemLogPanel(
+                            log: orchestrator.debugLog,
+                            isExpanded: $showSystemLog,
+                            onClear: { orchestrator.debugLog = "" }
+                        )
+                        .padding(.horizontal, DS.Space.md)
+
+                        // ── 整合状态摘要 ─────────────────────────────────────
+                        if !orchestrator.mergedResponse.isEmpty {
+                            MergedSummaryBadge(charCount: orchestrator.mergedResponse.count)
+                                .padding(.horizontal, DS.Space.md)
+                        }
+
+                        Color.clear.frame(height: 80 + DS.Space.lg)
                     }
-                    .frame(width: 0, height: 0)
+                    .padding(.vertical, DS.Space.sm)
                 }
             }
         }
+        // ── 登录 Sheet ────────────────────────────────────────────────────
+        .sheet(isPresented: $showDSLogin) {
+            LoginSheet(
+                title: "DeepSeek 登录",
+                color: DS.Color.deepSeek,
+                webView: dsHolder.webView
+            )
+        }
+        .sheet(isPresented: $showGMLogin) {
+            LoginSheet(
+                title: "Gemini 登录",
+                color: DS.Color.gemini,
+                webView: gmHolder.webView
+            )
+        }
     }
 }
 
-// MARK: - Platform Mini Badge（50x50，点击切换到该平台）
+// MARK: - Control Panel Header
 
-private struct PlatformMiniBadge: View {
-    let platform: AccountView.ViewPlatform
-    let onTap: () -> Void
+private struct ControlPanelHeader: View {
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("双端控制面板")
+                    .font(DS.Font.displayMedium)
+                    .foregroundStyle(
+                        LinearGradient(colors: [DS.Color.purpleLight, DS.Color.cyan],
+                                       startPoint: .leading, endPoint: .trailing)
+                    )
+                Text("管理登录状态 · 监控系统运行")
+                    .font(DS.Font.labelSmall)
+                    .foregroundColor(DS.Color.textSecondary)
+            }
+            Spacer()
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 20))
+                .foregroundColor(DS.Color.cyan.opacity(0.7))
+        }
+        .padding(.horizontal, DS.Space.md)
+        .padding(.vertical, DS.Space.md)
+        .background(DS.Gradient.navBar.ignoresSafeArea(edges: .top))
+    }
+}
+
+// MARK: - Platform Status Card
+
+private struct PlatformStatusCard: View {
+    let name: String
+    let icon: String
+    let color: Color
+    let gradient: LinearGradient
+    let isReady: Bool
+    let isLoading: Bool
+    let onLogin: () -> Void
+
+    private var statusText: String {
+        if isLoading { return "思考中…" }
+        return isReady ? "已就绪" : "未登录"
+    }
+    private var statusColor: Color {
+        if isLoading { return DS.Color.warning }
+        return isReady ? DS.Color.success : DS.Color.error
+    }
+    private var statusIcon: String {
+        if isLoading { return "circle.dashed" }
+        return isReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+    }
 
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 4) {
-                Image(systemName: platform.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(platform.color)
-                Text(platform == .deepSeek ? "DS" : "GM")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(platform.color.opacity(0.8))
+        VStack(spacing: DS.Space.sm) {
+            // 平台图标行
+            HStack(spacing: DS.Space.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(color)
+                Text(name)
+                    .font(DS.Font.titleMedium)
+                    .foregroundColor(color)
+                Spacer()
+                // 状态指示灯
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: statusColor.opacity(0.9), radius: 4)
             }
-            .frame(width: 50, height: 50)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(DS.Color.bgCard.opacity(0.92))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(platform.color.opacity(0.45), lineWidth: 1.2)
-                    )
-            )
-            .shadow(color: platform.color.opacity(0.25), radius: 8, x: 0, y: 3)
+
+            Divider().background(color.opacity(0.2))
+
+            // 状态文本
+            HStack(spacing: 4) {
+                Image(systemName: statusIcon)
+                    .font(.system(size: 11))
+                    .foregroundColor(statusColor)
+                Text(statusText)
+                    .font(DS.Font.labelSmall)
+                    .foregroundColor(statusColor)
+                Spacer()
+            }
+
+            // 登录按钮（未就绪时显示）
+            if !isReady && !isLoading {
+                Button(action: onLogin) {
+                    Label("点击登录", systemImage: "arrow.right.circle.fill")
+                        .font(DS.Font.labelSmall)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: DS.Radius.sm)
+                                .fill(gradient)
+                        )
+                }
+                .buttonStyle(.plain)
+            } else if isReady {
+                Button(action: onLogin) {
+                    Text("切换账号")
+                        .font(.system(size: 10))
+                        .foregroundColor(color.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(DS.Space.md)
+        .frame(maxWidth: .infinity)
+        .glassCard()
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.md)
+                .strokeBorder(color.opacity(isReady ? 0.35 : 0.15), lineWidth: 1)
+        )
     }
 }
 
-// MARK: - PlatformWebHolder
+// MARK: - Login Hint Banner
+
+private struct LoginHintBanner: View {
+    let dsReady: Bool
+    let gmReady: Bool
+
+    private var missingPlatforms: String {
+        var missing: [String] = []
+        if !dsReady { missing.append("DeepSeek") }
+        if !gmReady { missing.append("Gemini") }
+        return missing.joined(separator: " 和 ")
+    }
+
+    var body: some View {
+        HStack(spacing: DS.Space.sm) {
+            Image(systemName: "info.circle.fill")
+                .foregroundColor(DS.Color.warning)
+                .font(.system(size: 14))
+            Text("\(missingPlatforms) 尚未登录，请点击对应卡片进行登录，登录后自动化功能将立即可用。")
+                .font(DS.Font.bodyMedium)
+                .foregroundColor(DS.Color.textSecondary)
+                .lineSpacing(3)
+        }
+        .padding(DS.Space.md)
+        .glassCard()
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.md)
+                .strokeBorder(DS.Color.warning.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - System Log Panel（折叠式）
+
+private struct SystemLogPanel: View {
+    let log: String
+    @Binding var isExpanded: Bool
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 折叠触发行
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: DS.Space.sm) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(DS.Color.cyan.opacity(0.7))
+                    Text("系统日志")
+                        .font(DS.Font.titleMedium)
+                        .foregroundColor(DS.Color.textSecondary)
+                    if !log.isEmpty {
+                        Text("\(log.components(separatedBy: "\n").count) 条")
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.Color.textMuted)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(DS.Color.cyan.opacity(0.1)))
+                    }
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Color.textMuted)
+                }
+                .padding(DS.Space.md)
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider().background(DS.Color.border)
+
+                if log.isEmpty {
+                    Text("暂无日志记录")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(DS.Color.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(DS.Space.md)
+                } else {
+                    ScrollView {
+                        Text(log)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.green.opacity(0.85))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(DS.Space.md)
+                    }
+                    .frame(maxHeight: 250)
+
+                    HStack {
+                        Spacer()
+                        Button(action: onClear) {
+                            Label("清除日志", systemImage: "trash")
+                                .font(DS.Font.labelSmall)
+                                .foregroundColor(DS.Color.error.opacity(0.7))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, DS.Space.md)
+                        .padding(.bottom, DS.Space.sm)
+                    }
+                }
+            }
+        }
+        .glassCard()
+    }
+}
+
+// MARK: - Merged Summary Badge
+
+private struct MergedSummaryBadge: View {
+    let charCount: Int
+    var body: some View {
+        HStack(spacing: DS.Space.sm) {
+            Image(systemName: "checkmark.seal.fill")
+                .foregroundColor(DS.Color.success)
+                .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("整合总结已生成")
+                    .font(DS.Font.titleMedium)
+                    .foregroundColor(DS.Color.success)
+                Text("共 \(charCount) 字 · 请前往工作台查看")
+                    .font(DS.Font.labelSmall)
+                    .foregroundColor(DS.Color.textSecondary)
+            }
+            Spacer()
+        }
+        .padding(DS.Space.md)
+        .glassCard()
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.md)
+                .strokeBorder(DS.Color.success.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Login Sheet
+
+private struct LoginSheet: View {
+    let title: String
+    let color: Color
+    let webView: WKWebView
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ExistingWebViewContainer(webView: webView)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(DS.Color.bgCard, for: .navigationBar)
+                .toolbarColorScheme(.dark, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { dismiss() }
+                            .foregroundColor(color)
+                    }
+                }
+        }
+    }
+}
+
+// MARK: - PlatformWebHolder（持有登录 WebView，与自动化 WebView 共享 Cookie）
 
 @MainActor
 final class PlatformWebHolder: NSObject, ObservableObject {
@@ -132,15 +386,13 @@ final class PlatformWebHolder: NSObject, ObservableObject {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore.default()
         config.allowsInlineMediaPlayback = true
-        let wv = WKWebView(frame: .zero, configuration: config)
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
         wv.allowsBackForwardNavigationGestures = true
         wv.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         self.webView = wv
         super.init()
         wv.navigationDelegate = self
-        if let url = URL(string: urlString) {
-            wv.load(URLRequest(url: url))
-        }
+        if let url = URL(string: urlString) { wv.load(URLRequest(url: url)) }
     }
 }
 
@@ -149,84 +401,5 @@ extension PlatformWebHolder: WKNavigationDelegate {
                              decidePolicyFor action: WKNavigationAction,
                              decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         decisionHandler(.allow)
-    }
-}
-
-// MARK: - PlatformWebViewPanel
-
-private struct PlatformWebViewPanel: UIViewRepresentable {
-    let holder: PlatformWebHolder
-
-    func makeUIView(context: Context) -> WKWebView { holder.webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
-}
-
-// MARK: - Nav Bar
-
-private struct AccountNavBar: View {
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("账户管理")
-                    .font(DS.Font.displayMedium)
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [DS.Color.purpleLight, DS.Color.cyan],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                    )
-                Text("登录后聊天记录将自动同步")
-                    .font(DS.Font.labelSmall)
-                    .foregroundColor(DS.Color.textSecondary)
-            }
-            Spacer()
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 20))
-                .foregroundColor(DS.Color.success)
-        }
-        .padding(.horizontal, DS.Space.md)
-        .padding(.vertical, DS.Space.md)
-        .background(DS.Gradient.navBar.ignoresSafeArea(edges: .top))
-    }
-}
-
-// MARK: - Platform Segment Picker
-
-private struct PlatformSegmentPicker: View {
-    @Binding var selected: AccountView.ViewPlatform
-
-    var body: some View {
-        HStack(spacing: DS.Space.sm) {
-            ForEach(AccountView.ViewPlatform.allCases, id: \.self) { platform in
-                Button {
-                    selected = platform
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: platform.icon)
-                            .font(.system(size: 13, weight: .semibold))
-                        Text(platform.rawValue)
-                            .font(DS.Font.titleMedium)
-                    }
-                    .foregroundColor(selected == platform ? .white : DS.Color.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(
-                        Group {
-                            if selected == platform {
-                                RoundedRectangle(cornerRadius: DS.Radius.sm)
-                                    .fill(platform.gradient)
-                                    .shadow(color: platform.color.opacity(0.4), radius: 8, x: 0, y: 3)
-                            } else {
-                                RoundedRectangle(cornerRadius: DS.Radius.sm)
-                                    .fill(DS.Color.bgInput)
-                            }
-                        }
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(DS.Space.xs)
-        .glassCard(cornerRadius: DS.Radius.sm + DS.Space.xs)
     }
 }
