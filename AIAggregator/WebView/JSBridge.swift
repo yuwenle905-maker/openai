@@ -564,13 +564,22 @@ enum JSBridge {
 
     static func buildMergeScript(deepSeekAnswer: String, geminiAnswer: String) -> String {
         let mergeQuery = """
-        以下是两个 AI 对同一问题的回答，请整合两者精华，给出简洁、准确、完整的最终答案：
+        你是一个深度分析专家。以下是两个顶级 AI（DeepSeek 与 Gemini）对同一问题的独立回答。
+
+        你的任务：
+        1. 提取两者的核心洞见与关键信息，识别共识与分歧；
+        2. 对分歧处给出你自己的判断与依据；
+        3. 综合输出一份结构清晰、逻辑严密、信息密度高的最终答案；
+        4. 如有代码或步骤，保留最准确完整的版本；
+        5. 不要简单合并，而是真正"整合精华、去除冗余"。
 
         【DeepSeek 回答】
         \(deepSeekAnswer)
 
         【Gemini 回答】
         \(geminiAnswer)
+
+        请直接给出整合后的最终答案，不要重复引用原文。
         """
         return buildInputScript(query: mergeQuery, platform: .gemini)
     }
