@@ -167,8 +167,18 @@ enum JSBridge {
                         return '';
                     }
 
+                    // 记录监听启动时的 DOM 基线长度，防止 merge 时把旧回复当新结果上报
+                    window.__gmBaselineLen = getReply().length;
+                    window.__gmNewContentSeen = (window.__gmBaselineLen === 0); // 若当前为空则无需等新内容
+                    console.log('[GMListener] 启动，baseline=' + window.__gmBaselineLen);
+
                     function tryPost(reason) {
                         if (window.__gmSent) return;
+                        // 必须等到内容相对基线发生了变化（排除旧回复被误报）
+                        if (!window.__gmNewContentSeen) {
+                            console.log('[GMListener] 尚未见到新内容，跳过 reason=' + reason);
+                            return;
+                        }
                         var text = getReply();
                         if (text.length < 5) { return; }
                         window.__gmSent = true;
@@ -182,7 +192,9 @@ enum JSBridge {
                     window.__gmObserver = new MutationObserver(function() {
                         var len = getReply().length;
                         window.__gmReplyLen = len;
-                        console.log('[GM-DOM] changed len=' + len);
+                        // 内容长度与基线不同（增长或清零后重新出现）则标记"新内容"
+                        if (len !== window.__gmBaselineLen) { window.__gmNewContentSeen = true; }
+                        console.log('[GM-DOM] changed len=' + len + ' baseline=' + window.__gmBaselineLen + ' new=' + window.__gmNewContentSeen);
                         clearTimeout(window.__gmDebounce);
                         window.__gmDebounce = setTimeout(function() { tryPost('debounce'); }, 1500);
                     });
@@ -192,21 +204,27 @@ enum JSBridge {
                         if (window.__gmSent) { clearInterval(window.__gmPolling); return; }
                         window.__gmPollCount++;
                         var len = getReply().length;
+                        // 同步更新新内容标记
+                        if (len !== window.__gmBaselineLen && len > 0) { window.__gmNewContentSeen = true; }
                         if (len === 0 && window.__gmPollCount === 5) {
                             var c = document.querySelectorAll('model-response,message-content,[class*="response-content"],[class*="model-response"],[class*="markdown"],[class*="assistant"]').length;
-                            try { window.webkit.messageHandlers.\(handler)_debug.postMessage('GM 5s仍空，候选容器=' + c); } catch(e) {}
+                            try { window.webkit.messageHandlers.\(handler)_debug.postMessage('GM 5s仍空，候选容器=' + c + ' baseline=' + window.__gmBaselineLen); } catch(e) {}
                         }
-                        if (len >= 5 && len === window.__gmPrevPollLen) {
+                        if (window.__gmNewContentSeen && len >= 5 && len === window.__gmPrevPollLen) {
                             if (++window.__gmNoChangeCount >= 3) { clearInterval(window.__gmPolling); tryPost('poll-3s'); }
                         } else { window.__gmNoChangeCount = 0; }
                         window.__gmPrevPollLen = len;
                     }, 1000);
 
                     window.__gmMaxTimer = setTimeout(function() {
-                        if (!window.__gmSent) tryPost('timeout-90s');
+                        if (!window.__gmSent) {
+                            // 超时兜底：强制标记新内容，取当前 DOM 最佳文本
+                            window.__gmNewContentSeen = true;
+                            tryPost('timeout-90s');
+                        }
                     }, 90000);
 
-                    console.log('[GMListener] 监听启动');
+                    console.log('[GMListener] 监听启动完成');
                 };
             })();
             """
@@ -564,22 +582,13 @@ enum JSBridge {
 
     static func buildMergeScript(deepSeekAnswer: String, geminiAnswer: String) -> String {
         let mergeQuery = """
-        你是一个深度分析专家。以下是两个顶级 AI（DeepSeek 与 Gemini）对同一问题的独立回答。
-
-        你的任务：
-        1. 提取两者的核心洞见与关键信息，识别共识与分歧；
-        2. 对分歧处给出你自己的判断与依据；
-        3. 综合输出一份结构清晰、逻辑严密、信息密度高的最终答案；
-        4. 如有代码或步骤，保留最准确完整的版本；
-        5. 不要简单合并，而是真正"整合精华、去除冗余"。
+        你是一个深度分析专家。请根据提供的两个 AI 回复，撰写一份结构化、不少于 300 字的详细总结。请包含：背景分析、核心观点对比、以及具体的执行建议。
 
         【DeepSeek 回答】
         \(deepSeekAnswer)
 
         【Gemini 回答】
         \(geminiAnswer)
-
-        请直接给出整合后的最终答案，不要重复引用原文。
         """
         return buildInputScript(query: mergeQuery, platform: .gemini)
     }

@@ -4,7 +4,6 @@ import WebKit
 struct AccountView: View {
     @State private var selectedPlatform: ViewPlatform = .deepSeek
 
-    // 两个独立 WKWebView，用 @StateObject 保证只创建一次
     @StateObject private var dsHolder = PlatformWebHolder(urlString: "https://chat.deepseek.com")
     @StateObject private var gmHolder = PlatformWebHolder(urlString: "https://gemini.google.com")
 
@@ -30,6 +29,9 @@ struct AccountView: View {
             case .gemini:   return "cpu"
             }
         }
+        var other: ViewPlatform {
+            self == .deepSeek ? .gemini : .deepSeek
+        }
     }
 
     var body: some View {
@@ -43,35 +45,84 @@ struct AccountView: View {
                     PlatformSegmentPicker(selected: $selectedPlatform)
                         .padding(DS.Space.md)
 
-                    // ZStack + opacity：两个 WebView 永远都在视图层级里，
-                    // 切换时只改透明度，完全不做 add/remove/swap，杜绝 UIKit 崩溃
-                    ZStack {
-                        PlatformWebViewPanel(holder: dsHolder)
-                            .opacity(selectedPlatform == .deepSeek ? 1 : 0)
-                            .allowsHitTesting(selectedPlatform == .deepSeek)
+                    // 主体区：选中的 WebView 全屏展开，未选中的保持最小帧（维持 Session）
+                    ZStack(alignment: .bottomTrailing) {
+                        // 选中平台 WebView
+                        Group {
+                            if selectedPlatform == .deepSeek {
+                                PlatformWebViewPanel(holder: dsHolder)
+                            } else {
+                                PlatformWebViewPanel(holder: gmHolder)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.md))
+                        .overlay(alignment: .top) {
+                            RoundedRectangle(cornerRadius: DS.Radius.md)
+                                .fill(selectedPlatform.gradient)
+                                .frame(height: 2)
+                        }
+                        .shadow(color: selectedPlatform.color.opacity(0.2), radius: 16, x: 0, y: 6)
 
-                        PlatformWebViewPanel(holder: gmHolder)
-                            .opacity(selectedPlatform == .gemini ? 1 : 0)
-                            .allowsHitTesting(selectedPlatform == .gemini)
+                        // 未选中平台：50x50 状态图标（点击切换）
+                        PlatformMiniBadge(platform: selectedPlatform.other) {
+                            selectedPlatform = selectedPlatform.other
+                        }
+                        .padding(.trailing, DS.Space.sm)
+                        .padding(.bottom, DS.Space.sm)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.md))
                     .padding(.horizontal, DS.Space.md)
                     .padding(.bottom, 80 + DS.Space.md)
-                    .overlay(alignment: .top) {
-                        RoundedRectangle(cornerRadius: DS.Radius.md)
-                            .fill(selectedPlatform.gradient)
-                            .frame(height: 2)
-                            .padding(.horizontal, DS.Space.md)
+
+                    // 两个 WebView 均保持在视图层级中（维持登录态），但尺寸设为 0
+                    ZStack {
+                        PlatformWebViewPanel(holder: dsHolder)
+                            .frame(width: selectedPlatform == .deepSeek ? 0 : 0,
+                                   height: 0)
+                            .opacity(0)
+                        PlatformWebViewPanel(holder: gmHolder)
+                            .frame(width: selectedPlatform == .gemini ? 0 : 0,
+                                   height: 0)
+                            .opacity(0)
                     }
-                    .shadow(color: selectedPlatform.color.opacity(0.2), radius: 16, x: 0, y: 6)
+                    .frame(width: 0, height: 0)
                 }
             }
         }
     }
 }
 
+// MARK: - Platform Mini Badge（50x50，点击切换到该平台）
+
+private struct PlatformMiniBadge: View {
+    let platform: AccountView.ViewPlatform
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                Image(systemName: platform.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(platform.color)
+                Text(platform == .deepSeek ? "DS" : "GM")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(platform.color.opacity(0.8))
+            }
+            .frame(width: 50, height: 50)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(DS.Color.bgCard.opacity(0.92))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(platform.color.opacity(0.45), lineWidth: 1.2)
+                    )
+            )
+            .shadow(color: platform.color.opacity(0.25), radius: 8, x: 0, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - PlatformWebHolder
-// 持有单个平台的 WKWebView，@MainActor 保证主线程初始化
 
 @MainActor
 final class PlatformWebHolder: NSObject, ObservableObject {
@@ -102,7 +153,6 @@ extension PlatformWebHolder: WKNavigationDelegate {
 }
 
 // MARK: - PlatformWebViewPanel
-// 把 WKWebView 固定放入 UIKit 层；只做 makeUIView，永不 swap
 
 private struct PlatformWebViewPanel: UIViewRepresentable {
     let holder: PlatformWebHolder
@@ -149,7 +199,7 @@ private struct PlatformSegmentPicker: View {
         HStack(spacing: DS.Space.sm) {
             ForEach(AccountView.ViewPlatform.allCases, id: \.self) { platform in
                 Button {
-                    selected = platform          // 无动画，避免 WKWebView 快照崩溃
+                    selected = platform
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: platform.icon)

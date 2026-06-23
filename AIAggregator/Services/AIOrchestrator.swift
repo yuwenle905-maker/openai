@@ -21,8 +21,10 @@ final class AIOrchestrator: ObservableObject {
     private var mergeTimeoutWork: DispatchWorkItem?
     private var sendTimeoutWork: DispatchWorkItem?
 
-    // 回复稳定性缓冲（内容 2s 不再增长则视为完成）
-    private var dsStabilizeWork: DispatchWorkItem?
+    // 3s 监听窗口 + 2s 稳定判定
+    private var dsWindowWork: DispatchWorkItem?   // 1s 初始缓冲
+    private var dsStabilizeWork: DispatchWorkItem? // 2s 稳定检测
+    private var gmWindowWork: DispatchWorkItem?
     private var gmStabilizeWork: DispatchWorkItem?
     private var lastDSLength = 0
     private var lastGMLength = 0
@@ -42,8 +44,7 @@ final class AIOrchestrator: ObservableObject {
         isGeminiLoading   = true
         lastDSLength      = 0
         lastGMLength      = 0
-        dsStabilizeWork?.cancel()
-        gmStabilizeWork?.cancel()
+        cancelAllStabilize()
         appendDebug("📤 发送: \(query.prefix(30))...")
 
         sendTimeoutWork?.cancel()
@@ -65,47 +66,53 @@ final class AIOrchestrator: ObservableObject {
 
     func merge() {
         guard canMerge else { return }
-        isMerging = true
+        isMerging      = true
         mergedResponse = ""
+        objectWillChange.send()
+        appendDebug("🔀 触发整合，注入 Gemini...")
         let script = JSBridge.buildMergeScript(deepSeekAnswer: deepSeekResponse, geminiAnswer: geminiResponse)
-        webVM.geminiWebView.evaluateJavaScript(script) { _, error in
-            if let error { print("[Orchestrator] merge 注入错误: \(error)") }
+        webVM.geminiWebView.evaluateJavaScript(script) { [weak self] _, error in
+            if let error {
+                self?.appendDebug("⚠️ merge 注入错误: \(error.localizedDescription)")
+            }
         }
         mergeTimeoutWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isMerging else { return }
             self.appendDebug("⚠️ 整合120s超时，强制重置")
             self.isMerging = false
+            self.objectWillChange.send()
         }
         mergeTimeoutWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: work)
     }
 
-    // MARK: - 强制渲染（带 2s 稳定缓冲）
+    // MARK: - 强制渲染（带 3s 缓冲窗口）
 
     func renderDeepSeekReply(_ reply: String) {
         guard !reply.isEmpty else { return }
         sendTimeoutWork?.cancel()
         deepSeekResponse = reply
         objectWillChange.send()
-        appendDebug("📥 DS回复到达，长度=\(reply.count)，等待稳定...")
-        scheduleStabilize(for: .deepSeek, length: reply.count)
+        appendDebug("📥 DS回复到达，长度=\(reply.count)，开启3s监听窗口...")
+        scheduleWindow(for: .deepSeek, currentLength: reply.count)
     }
 
     func renderGeminiReply(_ reply: String) {
         guard !reply.isEmpty else { return }
         if isMerging {
+            // 整合结果：直接写入，强制刷新 UI
             mergedResponse = reply
             isMerging      = false
             mergeTimeoutWork?.cancel()
             objectWillChange.send()
-            appendDebug("✅ 整合回复渲染，长度=\(reply.count)")
+            appendDebug("✅ 整合回复写入，长度=\(reply.count)")
         } else {
             sendTimeoutWork?.cancel()
             geminiResponse = reply
             objectWillChange.send()
-            appendDebug("📥 GM回复到达，长度=\(reply.count)，等待稳定...")
-            scheduleStabilize(for: .gemini, length: reply.count)
+            appendDebug("📥 GM回复到达，长度=\(reply.count)，开启3s监听窗口...")
+            scheduleWindow(for: .gemini, currentLength: reply.count)
         }
     }
 
@@ -119,21 +126,52 @@ final class AIOrchestrator: ObservableObject {
         if lines.count > 20 { debugLog = lines.suffix(20).joined(separator: "\n") }
     }
 
-    // MARK: - 稳定缓冲（2s内容不再增长则标记完成）
+    // MARK: - 3s 监听窗口（1s初始缓冲 + 2s稳定检测）
 
     private enum ReplySource { case deepSeek, gemini }
 
-    private func scheduleStabilize(for source: ReplySource, length: Int) {
+    // 第一阶段：1s 初始缓冲（等内容开始流入后再进入稳定检测）
+    private func scheduleWindow(for source: ReplySource, currentLength: Int) {
+        switch source {
+        case .deepSeek:
+            dsWindowWork?.cancel()
+            dsStabilizeWork?.cancel()
+            lastDSLength = currentLength
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                // 1s 后更新快照，进入第二阶段稳定检测
+                self.lastDSLength = self.deepSeekResponse.count
+                self.appendDebug("⏱ DS 1s缓冲完毕，长度=\(self.lastDSLength)，等待2s稳定...")
+                self.scheduleStabilize(for: .deepSeek)
+            }
+            dsWindowWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+
+        case .gemini:
+            gmWindowWork?.cancel()
+            gmStabilizeWork?.cancel()
+            lastGMLength = currentLength
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.lastGMLength = self.geminiResponse.count
+                self.appendDebug("⏱ GM 1s缓冲完毕，长度=\(self.lastGMLength)，等待2s稳定...")
+                self.scheduleStabilize(for: .gemini)
+            }
+            gmWindowWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+        }
+    }
+
+    // 第二阶段：2s 稳定检测（内容 2s 不再增长则完成）
+    private func scheduleStabilize(for source: ReplySource) {
         switch source {
         case .deepSeek:
             dsStabilizeWork?.cancel()
-            lastDSLength = length
             let work = DispatchWorkItem { [weak self] in self?.checkStability(source: .deepSeek) }
             dsStabilizeWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
         case .gemini:
             gmStabilizeWork?.cancel()
-            lastGMLength = length
             let work = DispatchWorkItem { [weak self] in self?.checkStability(source: .gemini) }
             gmStabilizeWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
@@ -147,20 +185,25 @@ final class AIOrchestrator: ObservableObject {
             if current == lastDSLength {
                 isDeepSeekLoading = false
                 objectWillChange.send()
-                appendDebug("✅ DS回复稳定，长度=\(current)")
+                appendDebug("✅ DS回复稳定（3s窗口完成），长度=\(current)")
                 tryAutoMerge()
             } else {
-                scheduleStabilize(for: .deepSeek, length: current)
+                // 内容仍在变化，重启稳定检测
+                lastDSLength = current
+                appendDebug("🔄 DS内容更新中，长度=\(current)，重置稳定计时...")
+                scheduleStabilize(for: .deepSeek)
             }
         case .gemini:
             let current = geminiResponse.count
             if current == lastGMLength {
                 isGeminiLoading = false
                 objectWillChange.send()
-                appendDebug("✅ GM回复稳定，长度=\(current)")
+                appendDebug("✅ GM回复稳定（3s窗口完成），长度=\(current)")
                 tryAutoMerge()
             } else {
-                scheduleStabilize(for: .gemini, length: current)
+                lastGMLength = current
+                appendDebug("🔄 GM内容更新中，长度=\(current)，重置稳定计时...")
+                scheduleStabilize(for: .gemini)
             }
         }
     }
@@ -169,11 +212,18 @@ final class AIOrchestrator: ObservableObject {
     private func tryAutoMerge() {
         guard !isDeepSeekLoading, !isGeminiLoading,
               canMerge, !isMerging, mergedResponse.isEmpty else { return }
-        appendDebug("🔀 双端稳定，自动触发整合")
+        appendDebug("🔀 双端3s窗口内容已稳定，自动触发整合")
         merge()
     }
 
-    // MARK: - Private
+    private func cancelAllStabilize() {
+        dsWindowWork?.cancel()
+        dsStabilizeWork?.cancel()
+        gmWindowWork?.cancel()
+        gmStabilizeWork?.cancel()
+    }
+
+    // MARK: - Private Binding
 
     private func bindWebVM() {
         webVM.$deepSeekReply
