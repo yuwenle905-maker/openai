@@ -18,6 +18,10 @@ final class AIOrchestrator: ObservableObject {
     @Published var deepSeekIsReady: Bool = false
     @Published var geminiIsReady: Bool   = false
 
+    // 转发登录检测结果（自动化 WebView 侧）
+    @Published var deepSeekIsLoggedIn: Bool = false
+    @Published var geminiIsLoggedIn: Bool   = false
+
     var canMerge: Bool { !deepSeekResponse.isEmpty && !geminiResponse.isEmpty }
 
     private let webVM = WebViewModel()
@@ -250,6 +254,17 @@ final class AIOrchestrator: ObservableObject {
         webVM.$geminiIsReady
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.geminiIsReady = $0 }
+            .store(in: &cancellables)
+
+        // 转发登录状态
+        webVM.$deepSeekIsLoggedIn
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.deepSeekIsLoggedIn = $0 }
+            .store(in: &cancellables)
+
+        webVM.$geminiIsLoggedIn
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.geminiIsLoggedIn = $0 }
             .store(in: &cancellables)
     }
 }

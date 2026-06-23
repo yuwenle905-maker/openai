@@ -503,14 +503,29 @@ enum JSBridge {
                         window.__startGMListener();
                     }
 
-                    setTimeout(function() { trySend(el, 1); }, 400);
+                    setTimeout(function() { trySend(el, 1); }, 600);
                 }
 
                 // ── Step3：多策略发送 ────────────────────────────────
                 function trySend(el, round) {
                     var vw = window.innerWidth, vh = window.innerHeight;
 
-                    // 策略A：Enter键
+                    // ── 最高优先：直接定位 Gemini 专属发送按钮（包括 disabled 态）──
+                    var gSend = document.querySelector('button[jsname="Qx7uuf"]')
+                        || document.querySelector('button[aria-label*="Send message"]')
+                        || document.querySelector('button[aria-label*="Send"]')
+                        || document.querySelector('button[aria-label*="发送消息"]')
+                        || document.querySelector('button[aria-label*="发送"]');
+                    if (gSend) {
+                        if (gSend.hasAttribute('disabled')) { gSend.removeAttribute('disabled'); }
+                        if (gSend.getAttribute('aria-disabled') === 'true') { gSend.setAttribute('aria-disabled', 'false'); }
+                        gSend.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, cancelable:true }));
+                        gSend.dispatchEvent(new MouseEvent('mouseup',   { bubbles:true, cancelable:true }));
+                        gSend.click();
+                        post(DBG, 'GM 第' + round + '轮 直接发送: jsname=' + (gSend.getAttribute('jsname')||'-') + ' aria="' + (gSend.getAttribute('aria-label')||'-').substring(0,30) + '"');
+                    }
+
+                    // ── 策略A：Enter键 ──
                     function fireEnter(target) {
                         var o = { bubbles:true, cancelable:true, key:'Enter', code:'Enter', keyCode:13, which:13 };
                         target.dispatchEvent(new KeyboardEvent('keydown',  o));
@@ -520,15 +535,19 @@ enum JSBridge {
                     fireEnter(el);
                     fireEnter(document.body);
 
-                    // 策略B：按钮评分
+                    // ── 策略B：按钮评分（排除菜单/更多/设置类按钮）──
                     var best = null, bestScore = -1;
                     document.querySelectorAll('button').forEach(function(b) {
                         if (b.disabled) return;
-                        var s = 0;
                         var aria = (b.getAttribute('aria-label')||'').toLowerCase();
                         var jsn  = (b.getAttribute('jsname')||'').toLowerCase();
                         var cls  = (b.className||'').toLowerCase();
                         var txt  = (b.textContent||'').trim().toLowerCase();
+                        // 排除主菜单、更多选项、设置等非发送按钮
+                        if (aria.includes('menu') || aria.includes('菜单') || aria.includes('更多')
+                            || aria.includes('settings') || aria.includes('more') || aria.includes('option')
+                            || txt === '主菜单' || txt.includes('菜单') || txt.includes('设置')) return;
+                        var s = 0;
                         if (aria.includes('send') || aria.includes('发送')) s += 10;
                         if (jsn === 'qx7uuf') s += 9;
                         if (txt === 'send' || txt === '发送') s += 8;
@@ -536,14 +555,18 @@ enum JSBridge {
                         if (b.querySelector('svg') && txt.length < 3) s += 3;
                         if (s > bestScore) { bestScore = s; best = b; }
                     });
-                    if (best) {
+                    if (best && best !== gSend) {
                         best.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, cancelable:true }));
                         best.dispatchEvent(new MouseEvent('mouseup',   { bubbles:true, cancelable:true }));
                         best.click();
-                        post(DBG, 'GM 第' + round + '轮按钮: ' + (best.getAttribute('aria-label')||'').substring(0,20));
+                        post(DBG, 'GM 第' + round + '轮评分发送: aria="' + (best.getAttribute('aria-label')||'').substring(0,20) + '"');
+                    } else if (!gSend && !best) {
+                        var rolebtns = document.querySelectorAll('[role="button"]').length;
+                        var allbtns  = document.querySelectorAll('button').length;
+                        post(DBG, 'GM 第' + round + '轮无可点击元素: button=' + allbtns + ' role-button=' + rolebtns);
                     }
 
-                    // 策略C：坐标点击
+                    // ── 策略C：坐标点击 ──
                     function clickAt(x, y) {
                         var t = document.elementFromPoint(x, y);
                         if (!t) return;
@@ -589,6 +612,8 @@ enum JSBridge {
 
         【Gemini 回答】
         \(geminiAnswer)
+
+        【任务】：请直接输出分析内容，无需任何开场白
         """
         return buildInputScript(query: mergeQuery, platform: .gemini)
     }
@@ -608,6 +633,75 @@ enum JSBridge {
             window.webkit.messageHandlers.\(readyHandler).postMessage(isReady ? "true" : "false");
         })();
         """
+    }
+
+    // MARK: - 6. 登录状态扫描脚本（返回 "true"/"false"，供 evaluateJavaScript 直接使用）
+
+    static func loginScanScript(platform: AIPlatform) -> String {
+        switch platform {
+        case .deepSeek:
+            return """
+            (function() {
+                // 有输入框 = 已登录（登录页无 textarea）
+                var hasInput = !!(document.querySelector('textarea')
+                    || document.querySelector('[contenteditable="true"]'));
+
+                // 有密码框 = 登录表单 = 未登录
+                var hasLoginForm = !!(document.querySelector('input[type="password"]'));
+
+                // 侧边栏/历史记录 = 已登录
+                var hasSidebar = !!(
+                    document.querySelector('[class*="sidebar"]')
+                    || document.querySelector('[class*="history"]')
+                    || document.querySelector('[class*="conversation"]')
+                    || document.querySelector('[class*="chat-list"]')
+                );
+
+                // 页面文本含退出/用户名相关词
+                var bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+                var hasLogout = bodyText.includes('退出') || bodyText.includes('Logout')
+                    || bodyText.includes('Sign out') || bodyText.includes('注销')
+                    || bodyText.includes('余文乐') || bodyText.includes('账号');
+
+                var loggedIn = (hasInput || hasSidebar || hasLogout) && !hasLoginForm;
+                return loggedIn ? "true" : "false";
+            })()
+            """
+
+        case .gemini:
+            return """
+            (function() {
+                // rich-textarea 或 contenteditable = 登录后才出现
+                var hasInput = !!(document.querySelector('rich-textarea')
+                    || document.querySelector('[contenteditable="true"][role="textbox"]')
+                    || document.querySelector('textarea'));
+
+                // Google 账号头像 / 菜单按钮
+                var hasAccount = !!(
+                    document.querySelector('[data-ogsr-up]')
+                    || document.querySelector('[class*="gb_"]')
+                    || document.querySelector('[aria-label*="Google Account"]')
+                    || document.querySelector('[aria-label*="账号"]')
+                    || document.querySelector('img[src*="googleusercontent"]')
+                );
+
+                // "Sign in" 链接 = 未登录
+                var hasSignIn = !!(
+                    document.querySelector('a[href*="accounts.google.com/ServiceLogin"]')
+                    || document.querySelector('[aria-label="Sign in"]')
+                );
+
+                // 已有对话历史或用户名文字
+                var gmPageText = (document.body && document.body.innerText) ? document.body.innerText : '';
+                var hasHistory = document.querySelectorAll(
+                    'model-response, [data-message-author-role]'
+                ).length > 0 || gmPageText.includes('余文乐') || gmPageText.includes('账号');
+
+                var loggedIn = (hasInput || hasAccount || hasHistory) && !hasSignIn;
+                return loggedIn ? "true" : "false";
+            })()
+            """
+        }
     }
 
     // MARK: - 私有辅助

@@ -20,6 +20,10 @@ final class WebViewModel: NSObject, ObservableObject {
     @Published var deepSeekIsReady = false
     @Published var geminiIsReady   = false
 
+    /// 登录状态（DOM 检测：账号元素或用户名文字出现）
+    @Published var deepSeekIsLoggedIn = false
+    @Published var geminiIsLoggedIn   = false
+
     // MARK: - 后台 WebView 实例（lazy，首次访问时初始化）
 
     private(set) lazy var deepSeekWebView: WKWebView = makeWebView(platform: .deepSeek)
@@ -117,6 +121,23 @@ final class WebViewModel: NSObject, ObservableObject {
             if let error { print("[WVM] readyCheck error: \(error)") }
         }
     }
+
+    func checkLoginStatus(platform: AIPlatform) {
+        let wv = platform == .deepSeek ? deepSeekWebView : geminiWebView
+        let script = JSBridge.loginScanScript(platform: platform)
+        wv.evaluateJavaScript(script) { [weak self] result, _ in
+            guard let self, let str = result as? String else { return }
+            let loggedIn = (str == "true")
+            if platform == .deepSeek {
+                self.deepSeekIsLoggedIn = loggedIn
+                if loggedIn { self.deepSeekIsReady = true }
+            } else {
+                self.geminiIsLoggedIn = loggedIn
+                if loggedIn { self.geminiIsReady = true }
+            }
+            self.postDebug("[\(platform.messageHandler)] 登录检测=\(loggedIn)")
+        }
+    }
 }
 
 // MARK: - WKScriptMessageHandler
@@ -201,6 +222,12 @@ extension WebViewModel: WKNavigationDelegate {
             webView.evaluateJavaScript(probeScript) { _, error in
                 if let error { print("[WVM] domProbe error: \(error)") }
             }
+        }
+        // 登录状态检测：页面加载 5 秒后扫描一次
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else { return }
+            let platform: AIPlatform = (webView === self.deepSeekWebView) ? .deepSeek : .gemini
+            self.checkLoginStatus(platform: platform)
         }
     }
 
